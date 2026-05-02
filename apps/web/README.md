@@ -1,122 +1,226 @@
-# Barrio Competitivo Almería
-Aplicación web para analizar la brecha digital de negocios locales en Almería, agrupados por barrio, con visualización en mapa, filtros dinámicos y recomendaciones de mejora.
+# Barrio Competitivo Almeria
+
+Plataforma web para analizar la brecha digital de negocios locales en Almeria, agrupados por barrio, con visualizacion en mapa, filtros dinamicos y recomendaciones de accion apoyadas por IA.
+
 ## Objetivo
-Transformar datos de presencia digital de comercios en decisiones accionables:
+
+Convertir datos de presencia digital en decisiones practicas:
+
 - Detectar negocios con mayor oportunidad de mejora.
 - Comparar resultados por barrio y sector.
-- Priorizar acciones de alto impacto con apoyo de IA.
+- Priorizar acciones de alto impacto con recomendaciones automatizadas.
+
 ---
-## Stack Tecnológico
+
+## Arquitectura
+
+El proyecto se organiza en dos capas:
+
+- `apps/web`: frontend en Next.js.
+- `services/api`: backend en FastAPI para ingesta, calculo de metricas y operaciones de IA.
+
+El frontend consume el backend mediante HTTP (REST).
+
+---
+
+## Stack Tecnologico
+
 ### Frontend
-- **Next.js 16** (App Router)
-- **React 19**
-- **TypeScript 5**
-- **Tailwind CSS 4**
-- **Framer Motion** (animaciones UI)
-- **Leaflet + OpenStreetMap** (mapa interactivo)
-### Backend (actual)
-- **API Routes de Next.js**
-  - `GET /api/businesses`
-  - `GET /api/businesses/[id]`
-- Datos mock iniciales en `src/lib/mock-data.ts`
-### Calidad de código
-- **ESLint**
-- Tipado estricto con TypeScript (`strict: true`)
+
+- Next.js 16 (App Router)
+- React 19
+- TypeScript 5
+- Tailwind CSS 4
+- Framer Motion
+- Leaflet + OpenStreetMap
+
+### Backend
+
+- FastAPI (Python)
+- Pydantic (validacion y contratos de datos)
+- Uvicorn (servidor ASGI)
+
+### Persistencia
+
+- MVP: CSV/JSON versionados
+- Escalable: PostgreSQL cuando se requiera historico robusto, multiusuario y auditoria completa
+
 ---
-## Funcionalidades actuales
-- Dashboard principal con métricas:
+
+## Funcionalidades
+
+- Dashboard con metricas clave:
   - Barrios activos
   - Negocios analizados
   - Score medio
   - Brecha media
-- Filtros por:
-  - Barrio
-  - Sector
-  - Score mínimo
+- Filtros por barrio, sector y score minimo.
 - URL compartible con filtros activos.
 - Mapa de oportunidades con marcadores por nivel de score.
-- Lista “Top oportunidades” ordenada por mayor gap.
-- Vista detalle por negocio (`/negocio/[id]`) con benchmark y recomendaciones.
-- Feedback visual y animaciones de transición.
+- Ranking de oportunidades por mayor gap.
+- Vista detalle por negocio con benchmark y recomendaciones.
+
+ * score: Nota de madurez digital del negocio [0-100]
+ * gap: Distancia entre el score del negocio y el benchmark.
+ * Benchmark: Referencia contra la que comparar los negocios. Objetivo del sector (percentil 75).
+
+ Ejemplo rápido:
+- Score negocio: 58  
+- Benchmark sector: 75  
+- Gap: 75 - 58 = 17  
+=> ese negocio tiene 17 puntos de brecha.
 ---
-## Estructura del proyecto
+
+## Funcionamiento
+
+1. El frontend solicita datos al backend FastAPI.
+2. FastAPI valida y transforma datos de entrada.
+3. Se calculan score, gap y brecha media para el filtro actual.
+4. El backend devuelve listado, metricas agregadas y detalle.
+5. El frontend renderiza dashboard, mapa y fichas.
+6. Para IA, FastAPI puede entrenar/actualizar modelo y exponer inferencia de recomendaciones.
+
+---
+
+## Endpoints sugeridos (FastAPI)
+
+- `POST /ingesta/inicial`
+  - Carga inicial de negocios (CSV/JSON) para los 5 barrios.
+- `POST /features/recalcular`
+  - Recalcula score, gap y brecha media.
+- `POST /modelo/entrenar`
+  - Entrena o reentrena el modelo de recomendaciones.
+- `GET /modelo/version`
+  - Devuelve version y metadata del modelo activo.
+- `GET /negocios`
+  - Lista negocios con filtros (`barrio`, `sector`, `score_min`).
+- `GET /negocios/{id}`
+  - Devuelve detalle, benchmark y recomendaciones por negocio.
+- `GET /metricas/resumen`
+  - Devuelve KPIs agregados para el dashboard.
+
+---
+
+## Modelo de analisis
+
+- `Score (0-100)`: nivel de madurez digital del negocio.
+- `Gap`: distancia entre el score del negocio y el objetivo de referencia.
+- `Brecha media`: promedio de gap del conjunto filtrado.
+
+---
+
+## Criterio territorial (barrios)
+
+Metodo recomendado:
+
+1. Definir los 5 barrios con cartografia oficial (GeoJSON/Shapefile).
+2. Asignar negocio a barrio por coordenadas (`lat/lon`) con punto-en-poligono.
+3. Usar codigo postal solo como fallback cuando falte geolocalizacion.
+
+---
+
+## Estructura recomendada
+
 ```bash
-apps/web
-├── src/app
-│   ├── api/businesses/route.ts
-│   ├── api/businesses/[id]/route.ts
-│   ├── negocio/[id]/page.tsx
-│   ├── layout.tsx
-│   └── page.tsx
-├── src/components
-│   ├── business/opportunity-list.tsx
-│   ├── dashboard/dashboard-shell.tsx
-│   ├── dashboard/metric-card.tsx
-│   └── map/map-view.tsx
-├── src/lib
-│   ├── api-client.ts
-│   ├── mock-data.ts
-│   └── score-theme.ts
-└── src/app/globals.css
+apps/
+  web/                    # Next.js frontend
+services/
+  api/                    # FastAPI backend
+    app/
+      main.py
+      routers/
+      schemas/
+      services/
+      ml/
+      data/
+```
+
 ---
-## Flujo de funcionamiento
-1. El frontend carga el dashboard.
-2. Se consulta `GET /api/businesses`.
-3. Se renderizan métricas, mapa y ranking de oportunidades.
-4. El usuario aplica filtros (`barrio`, `sector`, `score_min`).
-5. Los filtros se reflejan en URL para compartir la vista.
-6. Al entrar al detalle de un negocio, se muestra benchmark y acciones recomendadas.
----
-Modelo de análisis (conceptos clave)
-- Score (0–100): nivel de madurez digital del negocio.
-- Gap: distancia entre el score del negocio y un objetivo de referencia.
-- Brecha media: promedio de gaps del conjunto filtrado (barrio/sector).
----
-Fuentes de datos (estrategia MVP)
-Para el arranque del proyecto:
-- Ingesta inicial única (sin periodicidad obligatoria).
-- Priorización de variables de alta disponibilidad (ej. Places + geolocalización).
-- Campos avanzados se incorporan en fases posteriores.
-> Nota: para una demo académica inicial no es obligatorio PostgreSQL ni ingestas periódicas.
----
-Instalación y ejecución local
-Requisitos
-- Node.js 20+ recomendado
-- npm
-Pasos
+
+## Puesta en marcha local
+
+### Requisitos
+
+- Node.js 20+
+- Python 3.11+
+
+### Frontend (Next.js)
+
+```bash
 cd apps/web
 npm install
 npm run dev
-Abrir en navegador:
-- http://localhost:3000
+```
+
+Frontend disponible en `http://localhost:3000`.
+
+### Backend (FastAPI)
+
+```bash
+cd services/api
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+API disponible en `http://localhost:8000`.
+Documentacion interactiva en `http://localhost:8000/docs`.
+
 ---
-Scripts disponibles
-npm run dev     # entorno de desarrollo
-npm run build   # build de producción
-npm run start   # ejecutar build
-npm run lint    # linting
+
+## Variables de entorno sugeridas
+
+### Frontend (`apps/web/.env.local`)
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+### Backend (`services/api/.env`)
+
+```env
+ENV=development
+DATA_PATH=./app/data
+MODEL_PATH=./app/ml/artifacts
+```
+
 ---
-## Roadmap (pasos a seguir)
-### Fase 1 - MVP funcional (actual + inmediato)
-- [x] Dashboard, mapa, filtros y detalle por negocio.
-- [x] API local con datos mock.
-- [ ] Definir dataset inicial real de 5 barrios.
-- [ ] Formalizar metodología de score/gap para memoria académica.
-### Fase 2 - Consolidación de datos
-- [ ] Sustituir mocks por fuente real de ingesta.
-- [ ] Asignación de barrio por coordenadas (punto-en-polígono).
-- [ ] Validación de calidad de datos y trazabilidad de asignación.
-### Fase 3 - Escalado técnico
-- [ ] Persistencia en base de datos (PostgreSQL + ORM).
-- [ ] Pipeline de actualización (si se requiere evolución temporal).
-- [ ] Autenticación y roles (admin/analista/visor).
-### Fase 4 - Inteligencia aplicada
-- [ ] Recomendaciones IA por dimensión débil.
-- [ ] Exportación de reportes (CSV/PDF).
-- [ ] Métricas de impacto por barrio.
+
+## Scripts utiles
+
+### Frontend
+
+- `npm run dev` - desarrollo
+- `npm run build` - build de produccion
+- `npm run start` - ejecutar build
+- `npm run lint` - linting
+
+### Backend
+
+- `uvicorn app.main:app --reload --port 8000` - desarrollo
+
 ---
-Criterio metodológico de barrios
-Método recomendado:
-1. Definir 5 barrios con cartografía oficial (GeoJSON/Shapefile).
-2. Asignar negocios por coordenadas (lat/lon) con punto-en-polígono.
-3. Usar código postal solo como fallback cuando falte geolocalización.
+
+## Roadmap
+
+### Fase 1 - MVP funcional
+
+- [x] Dashboard, mapa, filtros y detalle.
+- [ ] Endpoint de ingesta inicial en FastAPI.
+- [ ] Endpoint de calculo de score/gap.
+- [ ] Conexion completa Next.js -> FastAPI.
+
+### Fase 2 - IA aplicada
+
+- [ ] Pipeline de entrenamiento.
+- [ ] Versionado de modelos.
+- [ ] Recomendaciones por dimensiones debiles.
+
+### Fase 3 - Operacion y escalado
+
+- [ ] Validacion y monitoreo de calidad de datos.
+- [ ] Logging y observabilidad.
+- [ ] Migracion a PostgreSQL cuando aplique.
+
+
