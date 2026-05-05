@@ -52,17 +52,17 @@ def is_relevant_business(tags: dict) -> bool:
 def compute_score(tags: dict) -> int:
     score = 10
 
-    for key in ["website", "contact:website"]:
+    for key in ["website", "contact:website", "brand:website"]:
         if tags.get(key):
             score += 20
             break
 
-    for key in ["phone", "contact:phone"]:
+    for key in ["phone", "contact:phone", "brand:phone"]:
         if tags.get(key):
             score += 12
             break
 
-    for key in ["email", "contact:email"]:
+    for key in ["email", "contact:email", "brand:email"]:
         if tags.get(key):
             score += 8
             break
@@ -81,19 +81,28 @@ def compute_score(tags: dict) -> int:
 
     social_keys = [
         "contact:facebook",
+        "facebook",
         "contact:instagram",
+        "instagram",
         "contact:linkedin",
+        "linkedin",
         "contact:twitter",
+        "twitter",
         "contact:tiktok",
+        "tiktok",
     ]
     if any(tags.get(key) for key in social_keys):
         score += 8
 
     payment_keys = [
         "payment:cards",
+        "cards",
         "payment:credit_cards",
+        "credit_cards",
         "payment:debit_cards",
+        "debit_cards",
         "payment:contactless",
+        "contactless",
     ]
     if any(tags.get(key) == "yes" for key in payment_keys):
         score += 6
