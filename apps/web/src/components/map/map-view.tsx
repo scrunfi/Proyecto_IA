@@ -24,44 +24,60 @@ export function MapView({ businesses, onBoundsChange }: MapViewProps) {
   const leafletMapRef = useRef<unknown>(null);
   const leafletRef = useRef<unknown>(null);
   const markersLayerRef = useRef<unknown>(null);
+  const isInitializingRef = useRef(false);
 
   useEffect(() => {
     async function setupMap() {
-      if (!mapRef.current || leafletMapRef.current) {
+      if (!mapRef.current || leafletMapRef.current || isInitializingRef.current) {
         return;
       }
 
-      const L = (await import("leaflet")).default;
-      leafletRef.current = L;
+      isInitializingRef.current = true;
 
-      const map = L.map(mapRef.current as HTMLDivElement, {
-        center: [ALMERIA_CENTER[1], ALMERIA_CENTER[0]],
-        zoom: 11.6,
-        zoomControl: false,
-      });
-      leafletMapRef.current = map;
+      try {
+        const L = (await import("leaflet")).default;
+        leafletRef.current = L;
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      }).addTo(map);
+        if (!mapRef.current || leafletMapRef.current) {
+          return;
+        }
 
-      L.control.zoom({ position: "topright" }).addTo(map);
+        const container = mapRef.current as HTMLDivElement & { _leaflet_id?: number };
+        if (container._leaflet_id) {
+          delete container._leaflet_id;
+        }
 
-      const markersLayer = L.layerGroup().addTo(map);
-      markersLayerRef.current = markersLayer;
+        const map = L.map(container, {
+          center: [ALMERIA_CENTER[1], ALMERIA_CENTER[0]],
+          zoom: 11.6,
+          zoomControl: false,
+        });
+        leafletMapRef.current = map;
 
-      if (onBoundsChange) {
-        const emitBounds = () => {
-          const bounds = map.getBounds();
-          onBoundsChange({
-            south: bounds.getSouth(),
-            west: bounds.getWest(),
-            north: bounds.getNorth(),
-            east: bounds.getEast(),
-          });
-        };
-        map.on("moveend", emitBounds);
-        emitBounds();
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(map);
+
+        L.control.zoom({ position: "topright" }).addTo(map);
+
+        const markersLayer = L.layerGroup().addTo(map);
+        markersLayerRef.current = markersLayer;
+
+        if (onBoundsChange) {
+          const emitBounds = () => {
+            const bounds = map.getBounds();
+            onBoundsChange({
+              south: bounds.getSouth(),
+              west: bounds.getWest(),
+              north: bounds.getNorth(),
+              east: bounds.getEast(),
+            });
+          };
+          map.on("moveend", emitBounds);
+          emitBounds();
+        }
+      } finally {
+        isInitializingRef.current = false;
       }
     }
 
@@ -74,6 +90,7 @@ export function MapView({ businesses, onBoundsChange }: MapViewProps) {
         markersLayerRef.current = null;
         leafletRef.current = null;
       }
+      isInitializingRef.current = false;
     };
   }, [onBoundsChange]);
 

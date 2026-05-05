@@ -12,9 +12,132 @@ import type { ViewportBounds } from "@/lib/api-client";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
 
+const CATEGORY_GROUPS: Array<{ label: string; patterns: RegExp[] }> = [
+  {
+    label: "Restauracion",
+    patterns: [/\brestaur/i, /\bhosteler/i, /\bbar(es)?\b/i, /\bcaf(e|eter)/i],
+  },
+  {
+    label: "Alimentacion",
+    patterns: [/\baliment/i, /\bpanader/i, /\bpasteler/i, /\bsupermerc/i, /\bcarnicer/i],
+  },
+  {
+    label: "Salud",
+    patterns: [/\bsalud\b/i, /\bfarmaci/i, /\bclinic/i, /\bdental/i, /\bfisio/i],
+  },
+  {
+    label: "Peluquerias y belleza",
+    patterns: [/\bbelleza\b/i, /\bpeluquer/i, /\bestetica\b/i, /\bbarber/i, /\bunas\b/i],
+  },
+  {
+    label: "Automocion",
+    patterns: [/\bautomoc/i, /\btaller/i, /\bmecanic/i, /\bneumatic/i, /\bvehicul/i],
+  },
+  {
+    label: "Hogar",
+    patterns: [/\bhogar\b/i, /\bmueble/i, /\bdecorac/i, /\bbricolaje/i, /\bferreter/i],
+  },
+  {
+    label: "Reformas y construccion",
+    patterns: [/\breforma/i, /\bconstrucc/i, /\balbanil/i, /\bfontaner/i, /\belectric/i],
+  },
+  {
+    label: "Comercios",
+    patterns: [/\bmoda\b/i, /\bropa\b/i, /\bcalzado\b/i, /\bjoyer/i, /\bcomplement/i],
+  },
+  {
+    label: "Tecnologia",
+    patterns: [/\btecnolog/i, /\binformatic/i, /\belectronic/i, /\bmovil(es)?\b/i, /\bpc\b/i],
+  },
+  {
+    label: "Educacion",
+    patterns: [/\beducac/i, /\bacadem/i, /\bformac/i, /\bidioma/i, /\bescuela\b/i],
+  },
+  {
+    label: "Deporte y bienestar",
+    patterns: [/\bdeporte/i, /\bgimnas/i, /\bfitness/i, /\byoga\b/i, /\bpilates\b/i],
+  },
+  {
+    label: "Ocio y cultura",
+    patterns: [/\bocio\b/i, /\bcultura\b/i, /\blibrer/i, /\bcine\b/i, /\bevento/i],
+  },
+  {
+    label: "Servicios profesionales",
+    patterns: [/\bgestor/i, /\babogad/i, /\bconsultor/i, /\basesor/i, /\binmobiliari/i],
+  },
+  {
+    label: "Finanzas y seguros",
+    patterns: [/\bbanc/i, /\bfinanz/i, /\bcredito/i, /\bseguro/i, /\bcorredur/i],
+  },
+  {
+    label: "Turismo y alojamiento",
+    patterns: [/\bturism/i, /\bhotel/i, /\balojamiento/i, /\bhostal/i, /\bviaje/i],
+  },
+  {
+    label: "Transporte y logistica",
+    patterns: [/\btransporte/i, /\blogistic/i, /\benvio/i, /\bpaqueter/i, /\btaxi\b/i],
+  },
+  {
+    label: "Industria y suministros",
+    patterns: [/\bindustr/i, /\bsuministro/i, /\bmaquinaria/i, /\bfabric/i, /\bmaterial/i],
+  },
+  {
+    label: "Arte e impresion",
+    patterns: [/\barte\b/i, /\bdiseno\b/i, /\bimprent/i, /\bserigraf/i, /\bfotograf/i],
+  },
+  {
+    label: "Infantil y familia",
+    patterns: [/\binfantil/i, /\bjuguet/i, /\bguarder/i, /\bfamilia\b/i, /\bbebe\b/i],
+  },
+  {
+    label: "Servicios personales",
+    patterns: [/\blimpieza\b/i, /\blavander/i, /\bmensajer/i, /\breparacion\b/i],
+  },
+  {
+    label: "Mascotas",
+    patterns: [/\bmascota/i, /\bveterinari/i, /\bpet\b/i],
+  },
+];
+
+function normalizeCategory(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getCategoryGroup(value: string) {
+  const normalized = normalizeCategory(value);
+
+  for (const group of CATEGORY_GROUPS) {
+    if (group.patterns.some((pattern) => pattern.test(normalized))) {
+      return group.label;
+    }
+  }
+
+  if (/\bservicio|\brepara|\binstala|\bmantenimiento|\basistencia/i.test(normalized)) {
+    return "Servicios locales";
+  }
+
+  if (/\bshop|\bstore|\boutlet|\bmarket|\bventa|\bcomerc/i.test(normalized)) {
+    return "Comercio especializado";
+  }
+
+  if (/\bstudio|\bcreativ|\bagencia|\bmedia|\bproduccion/i.test(normalized)) {
+    return "Creatividad y medios";
+  }
+
+  if (/\bclub|\bocio|\bentreten|\bmusica|\bartesania/i.test(normalized)) {
+    return "Ocio y experiencias";
+  }
+
+  return "Comercios";
+}
+
 export function DashboardShell() {
   const MAX_MAP_MARKERS = 300;
   const MAX_OPPORTUNITIES = 120;
+  const MAX_SECTOR_OPTIONS = 14;
 
   const router = useRouter();
   const pathname = usePathname();
@@ -47,28 +170,62 @@ export function DashboardShell() {
   const selectedNeighborhood = searchParams.get("barrio") ?? "all";
   const selectedCategory =
     searchParams.get("sector") ?? searchParams.get("rubro") ?? "all";
+  const selectedGroupedCategory =
+    selectedCategory === "all" ? "all" : getCategoryGroup(selectedCategory);
   const rawScore = Number(searchParams.get("score_min") ?? "0");
   const minScore = Number.isNaN(rawScore) ? 0 : Math.max(0, Math.min(100, rawScore));
 
-  const categories = useMemo(() => {
-    return Array.from(new Set(businesses.map((item) => item.subcategory ?? item.category))).sort();
+  const groupedBusinesses = useMemo(() => {
+    return businesses.map((item) => ({
+      ...item,
+      groupedCategory: getCategoryGroup(item.subcategory ?? item.category),
+    }));
   }, [businesses]);
 
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    groupedBusinesses.forEach((item) => {
+      counts.set(item.groupedCategory, (counts.get(item.groupedCategory) ?? 0) + 1);
+    });
+
+    const ranked = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, MAX_SECTOR_OPTIONS)
+      .map(([group]) => group);
+
+    if (selectedGroupedCategory !== "all" && !ranked.includes(selectedGroupedCategory)) {
+      ranked.push(selectedGroupedCategory);
+    }
+
+    return ranked;
+  }, [groupedBusinesses, selectedGroupedCategory]);
+
+  const groupedSelectedCategory = selectedGroupedCategory;
+  const effectiveSelectedNeighborhood =
+    selectedNeighborhood === "all" || neighborhoods.includes(selectedNeighborhood)
+      ? selectedNeighborhood
+      : "all";
+  const effectiveSelectedCategory =
+    groupedSelectedCategory === "all" || categories.includes(groupedSelectedCategory)
+      ? groupedSelectedCategory
+      : "all";
+
   const filteredBusinesses = useMemo(() => {
-    return businesses.filter((item) => {
+    return groupedBusinesses.filter((item) => {
       const neighborhoodMatch =
-        selectedNeighborhood === "all" || item.neighborhood === selectedNeighborhood;
-      const sectorValue = item.subcategory ?? item.category;
-      const categoryMatch = selectedCategory === "all" || sectorValue === selectedCategory;
+        effectiveSelectedNeighborhood === "all" || item.neighborhood === effectiveSelectedNeighborhood;
+      const categoryMatch =
+        effectiveSelectedCategory === "all" || item.groupedCategory === effectiveSelectedCategory;
       const scoreMatch = item.score >= minScore;
 
       return neighborhoodMatch && categoryMatch && scoreMatch;
     });
-  }, [businesses, selectedNeighborhood, selectedCategory, minScore]);
+  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, minScore]);
 
   const activeFilterCount =
-    Number(selectedNeighborhood !== "all") +
-    Number(selectedCategory !== "all") +
+    Number(effectiveSelectedNeighborhood !== "all") +
+    Number(effectiveSelectedCategory !== "all") +
     Number(minScore > 0);
 
   function updateUrlFilters(next: {
@@ -76,8 +233,8 @@ export function DashboardShell() {
     category?: string;
     score?: number;
   }) {
-    const neighborhood = next.neighborhood ?? selectedNeighborhood;
-    const category = next.category ?? selectedCategory;
+    const neighborhood = next.neighborhood ?? effectiveSelectedNeighborhood;
+    const category = next.category ?? effectiveSelectedCategory;
     const score = next.score ?? minScore;
 
     const params = new URLSearchParams();
@@ -172,9 +329,9 @@ export function DashboardShell() {
               <span className="rounded-full bg-accent-soft px-2 py-1 text-accent">
                 {activeFilterCount} filtros activos
               </span>
-              {selectedNeighborhood !== "all" && (
+              {effectiveSelectedNeighborhood !== "all" && (
                 <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
-                  Barrio: {selectedNeighborhood}
+                  Barrio: {effectiveSelectedNeighborhood}
                   <button
                     type="button"
                     onClick={() => updateUrlFilters({ neighborhood: "all" })}
@@ -185,10 +342,10 @@ export function DashboardShell() {
                   </button>
                 </span>
               )}
-              {selectedCategory !== "all" && (
-                <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
-                  Sector: {selectedCategory}
-                  <button
+               {effectiveSelectedCategory !== "all" && (
+                 <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
+                   Sector: {effectiveSelectedCategory}
+                   <button
                     type="button"
                     onClick={() => updateUrlFilters({ category: "all" })}
                     className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
@@ -239,7 +396,7 @@ export function DashboardShell() {
           <label className="flex flex-col gap-2 text-sm">
             <span className="font-semibold">Barrio</span>
             <select
-              value={selectedNeighborhood}
+              value={effectiveSelectedNeighborhood}
               onChange={(event) => {
                 const value = event.target.value;
                 updateUrlFilters({ neighborhood: value });
@@ -258,7 +415,7 @@ export function DashboardShell() {
           <label className="flex flex-col gap-2 text-sm">
             <span className="font-semibold">Sector</span>
             <select
-              value={selectedCategory}
+              value={effectiveSelectedCategory}
               onChange={(event) => {
                 const value = event.target.value;
                 updateUrlFilters({ category: value });
