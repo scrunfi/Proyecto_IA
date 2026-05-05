@@ -252,6 +252,28 @@ export function DashboardShell() {
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }
 
+  useEffect(() => {
+    const hasInvalidNeighborhood =
+      selectedNeighborhood !== "all" && effectiveSelectedNeighborhood === "all";
+    const hasInvalidCategory = selectedCategory !== "all" && effectiveSelectedCategory === "all";
+
+    if (!hasInvalidNeighborhood && !hasInvalidCategory) {
+      return;
+    }
+
+    updateUrlFilters({
+      neighborhood: effectiveSelectedNeighborhood,
+      category: effectiveSelectedCategory,
+      score: minScore,
+    });
+  }, [
+    selectedNeighborhood,
+    selectedCategory,
+    effectiveSelectedNeighborhood,
+    effectiveSelectedCategory,
+    minScore,
+  ]);
+
   async function handleSaveView() {
     try {
       await navigator.clipboard.writeText(window.location.href);
