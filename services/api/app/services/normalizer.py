@@ -52,17 +52,17 @@ def is_relevant_business(tags: dict) -> bool:
 def compute_score(tags: dict) -> int:
     score = 10
 
-    for key in ["website", "contact:website"]:
+    for key in ["website", "contact:website", "brand:website"]:
         if tags.get(key):
             score += 20
             break
 
-    for key in ["phone", "contact:phone"]:
+    for key in ["phone", "contact:phone", "brand:phone"]:
         if tags.get(key):
             score += 12
             break
 
-    for key in ["email", "contact:email"]:
+    for key in ["email", "contact:email", "brand:email"]:
         if tags.get(key):
             score += 8
             break
