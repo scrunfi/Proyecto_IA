@@ -3,6 +3,7 @@ export type Business = {
   name: string;
   neighborhood: string;
   category: string;
+  subcategory?: string;
   lat: number;
   lon: number;
   score: number;

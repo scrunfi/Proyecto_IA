@@ -42,8 +42,8 @@ El frontend consume el backend mediante HTTP (REST).
 
 ### Persistencia
 
-- MVP: CSV/JSON versionados
-- Escalable: PostgreSQL cuando se requiera historico robusto, multiusuario y auditoria completa
+- MongoDB Atlas (cloud) para `shops` e `ingesta_runs`
+- Opcion hibrida recomendada: MongoDB (normalizado) + JSON crudo comprimido en object storage
 
 ---
 
@@ -82,22 +82,26 @@ El frontend consume el backend mediante HTTP (REST).
 
 ---
 
-## Endpoints sugeridos (FastAPI)
+## Endpoints actuales (FastAPI)
 
-- `POST /ingesta/inicial`
-  - Carga inicial de negocios (CSV/JSON) para los 5 barrios.
-- `POST /features/recalcular`
-  - Recalcula score, gap y brecha media.
-- `POST /modelo/entrenar`
-  - Entrena o reentrena el modelo de recomendaciones.
-- `GET /modelo/version`
-  - Devuelve version y metadata del modelo activo.
-- `GET /negocios`
-  - Lista negocios con filtros (`barrio`, `sector`, `score_min`).
-- `GET /negocios/{id}`
-  - Devuelve detalle, benchmark y recomendaciones por negocio.
-- `GET /metricas/resumen`
-  - Devuelve KPIs agregados para el dashboard.
+- `POST /ingesta`
+  - Ejecuta ingesta desde Overpass, normaliza y actualiza `shops`.
+- `GET /ingesta/runs`
+  - Lista ejecuciones de ingesta con paginacion.
+- `GET /shops`
+  - Lista negocios activos con filtros (`barrio`, `category`, `min_score`) y bbox opcional (`south`, `west`, `north`, `east`).
+- `GET /shops/id/{shop_id}`
+  - Devuelve ficha base de un negocio.
+- `GET /shops/id/{shop_id}/detail`
+  - Devuelve detalle con benchmark y recomendaciones.
+- `GET /shops/quality`
+  - Reporte agregado de calidad y asignacion de barrio.
+- `GET /shops/quality/issues`
+  - Muestra incidencias de calidad (sin barrio, sin ubicacion, posibles duplicados).
+- `POST /shops/repair-barrios`
+  - Reasigna barrio por coordenadas/etiquetas (`only_missing`, `limit`).
+
+Nota: el frontend incluye vistas operativas `/ingesta`, `/etl` y `/entrenamiento`. Actualmente, las acciones de ETL y entrenamiento son interfaz preparada y no tienen endpoint backend final equivalente.
 
 ---
 
@@ -180,9 +184,28 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ### Backend (`services/api/.env`)
 
 ```env
-ENV=development
-DATA_PATH=./app/data
-MODEL_PATH=./app/ml/artifacts
+MONGO_URI=mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority&appName=almeria
+MONGO_DB_NAME=almeria_shop
+OVERPASS_API_URL=https://overpass-api.de/api/interpreter
+OVERPASS_TIMEOUT_SECONDS=60
+OVERPASS_USER_AGENT=ProyectoAlmeria/1.0
+BARRIOS_GEOJSON_PATH=app/data/barrios.geojson
+```
+
+Nota: puedes copiar `services/api/.env.example` a `services/api/.env` y completar credenciales.
+
+---
+
+## Higiene de repositorio
+
+- No subir secretos ni configuracion local (`.env`, `.env.local`).
+- No subir entornos virtuales ni caches de Python (`.venv`, `__pycache__`, `*.pyc`).
+- Mantener versionado `services/api/.env.example` como plantilla compartida.
+- Si ya existen archivos locales ignorables, puedes limpiar el indice con:
+
+```bash
+git rm -r --cached services/api/.venv services/api/**/__pycache__
+git rm --cached services/api/.env
 ```
 
 ---
@@ -207,9 +230,10 @@ MODEL_PATH=./app/ml/artifacts
 ### Fase 1 - MVP funcional
 
 - [x] Dashboard, mapa, filtros y detalle.
-- [ ] Endpoint de ingesta inicial en FastAPI.
-- [ ] Endpoint de calculo de score/gap.
-- [ ] Conexion completa Next.js -> FastAPI.
+- [x] Ingesta base desde Overpass con normalizacion y scoring inicial.
+- [x] Endpoints de consulta de negocios y detalle.
+- [x] Conexion Next.js -> FastAPI para dashboard y detalle.
+- [ ] Cerrar paridad total entre panel operativo (`/ingesta`, `/etl`, `/entrenamiento`) y endpoints backend.
 
 ### Fase 2 - IA aplicada
 
@@ -219,7 +243,8 @@ MODEL_PATH=./app/ml/artifacts
 
 ### Fase 3 - Operacion y escalado
 
-- [ ] Validacion y monitoreo de calidad de datos.
+- [x] Reportes de calidad y utilidades de reparacion de barrio.
+- [ ] Validacion y monitoreo continuo de calidad de datos.
 - [ ] Logging y observabilidad.
 - [ ] Migracion a PostgreSQL cuando aplique.
 

@@ -6,6 +6,13 @@ export type BusinessesResponse = {
   generatedAt: string;
 };
 
+export type ViewportBounds = {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+};
+
 export type BusinessDetailResponse = {
   business: Business;
   benchmark: {
@@ -16,8 +23,17 @@ export type BusinessDetailResponse = {
   recommendations: string[];
 };
 
-export async function getBusinesses(): Promise<BusinessesResponse> {
-  const response = await fetch("/api/businesses", {
+export async function getBusinesses(bounds?: ViewportBounds): Promise<BusinessesResponse> {
+  const params = new URLSearchParams();
+  if (bounds) {
+    params.set("south", String(bounds.south));
+    params.set("west", String(bounds.west));
+    params.set("north", String(bounds.north));
+    params.set("east", String(bounds.east));
+  }
+
+  const query = params.toString();
+  const response = await fetch(query ? `/api/businesses?${query}` : "/api/businesses", {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });

@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 
-import { businesses } from "@/lib/mock-data";
+import { backendFetch } from "@/lib/backend-client";
+import { toBusiness } from "@/lib/business-adapter";
+
+type BackendShop = {
+  _id: string;
+  name?: string;
+  category?: string;
+  score?: number;
+  gap?: number;
+  reviews?: number;
+  location?: { coordinates?: [number, number] };
+  barrio?: { name?: string };
+};
 
 type Context = {
   params: Promise<{ id: string }>;
@@ -8,11 +20,15 @@ type Context = {
 
 export async function GET(_: Request, context: Context) {
   const { id } = await context.params;
-  const business = businesses.find((item) => item.id === id);
+  let shop: BackendShop;
 
-  if (!business) {
+  try {
+    shop = await backendFetch<BackendShop>(`/shops/id/${id}`);
+  } catch {
     return NextResponse.json({ message: "Negocio no encontrado" }, { status: 404 });
   }
+
+  const business = toBusiness(shop);
 
   const benchmark = {
     percentile: Math.max(10, 100 - business.gap),

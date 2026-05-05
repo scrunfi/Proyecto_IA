@@ -8,9 +8,10 @@ import { getScoreTheme } from "@/lib/score-theme";
 
 type OpportunityListProps = {
   businesses: Business[];
+  maxItems?: number;
 };
 
-export function OpportunityList({ businesses }: OpportunityListProps) {
+export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListProps) {
   if (businesses.length === 0) {
     return (
       <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm">
@@ -22,7 +23,10 @@ export function OpportunityList({ businesses }: OpportunityListProps) {
     );
   }
 
-  const sortedBusinesses = businesses.slice().sort((a, b) => b.gap - a.gap);
+  const sortedBusinesses = businesses
+    .slice()
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, maxItems);
 
   return (
     <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm">
@@ -39,6 +43,7 @@ export function OpportunityList({ businesses }: OpportunityListProps) {
         <AnimatePresence mode="popLayout">
           {sortedBusinesses.map((item) => {
             const theme = getScoreTheme(item.score);
+            const sectorLabel = item.subcategory ?? item.category;
 
             return (
               <motion.article
@@ -53,7 +58,7 @@ export function OpportunityList({ businesses }: OpportunityListProps) {
               className={`rounded-2xl border bg-surface-2 p-3 ${theme.borderClassName}`}
             >
               <p className="text-xs text-zinc-600">
-                {item.neighborhood} - {item.category}
+                {item.neighborhood} - {sectorLabel}
               </p>
               <p className="mt-1 font-semibold">{item.name}</p>
               <div className="mt-2 flex items-center justify-between text-sm">

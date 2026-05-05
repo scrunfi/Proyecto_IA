@@ -8,10 +8,14 @@ import { OpportunityList } from "@/components/business/opportunity-list";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { MapView } from "@/components/map/map-view";
 import { getBusinesses } from "@/lib/api-client";
+import type { ViewportBounds } from "@/lib/api-client";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
 
 export function DashboardShell() {
+  const MAX_MAP_MARKERS = 300;
+  const MAX_OPPORTUNITIES = 120;
+
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -20,21 +24,25 @@ export function DashboardShell() {
   const [neighborhoods, setNeighborhoods] = useState<string[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [copyState, setCopyState] = useState<"idle" | "ok" | "error">("idle");
+  const [viewportBounds, setViewportBounds] = useState<ViewportBounds | undefined>();
 
   useEffect(() => {
-    async function loadData() {
+    const timer = window.setTimeout(async () => {
       try {
-        const payload = await getBusinesses();
+        setStatus("loading");
+        const payload = await getBusinesses(viewportBounds);
         setBusinesses(payload.businesses);
         setNeighborhoods(payload.neighborhoods);
         setStatus("ready");
       } catch {
         setStatus("error");
       }
-    }
+    }, viewportBounds ? 350 : 0);
 
-    loadData();
-  }, []);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [viewportBounds]);
 
   const selectedNeighborhood = searchParams.get("barrio") ?? "all";
   const selectedCategory =
@@ -43,14 +51,15 @@ export function DashboardShell() {
   const minScore = Number.isNaN(rawScore) ? 0 : Math.max(0, Math.min(100, rawScore));
 
   const categories = useMemo(() => {
-    return Array.from(new Set(businesses.map((item) => item.category))).sort();
+    return Array.from(new Set(businesses.map((item) => item.subcategory ?? item.category))).sort();
   }, [businesses]);
 
   const filteredBusinesses = useMemo(() => {
     return businesses.filter((item) => {
       const neighborhoodMatch =
         selectedNeighborhood === "all" || item.neighborhood === selectedNeighborhood;
-      const categoryMatch = selectedCategory === "all" || item.category === selectedCategory;
+      const sectorValue = item.subcategory ?? item.category;
+      const categoryMatch = selectedCategory === "all" || sectorValue === selectedCategory;
       const scoreMatch = item.score >= minScore;
 
       return neighborhoodMatch && categoryMatch && scoreMatch;
@@ -118,6 +127,7 @@ export function DashboardShell() {
 
   const summaryTheme = getScoreTheme(summary.avgScore);
   const minScoreTheme = getScoreTheme(minScore);
+  const mapBusinesses = filteredBusinesses.slice(0, MAX_MAP_MARKERS);
 
   if (status === "error") {
     return (
@@ -296,14 +306,16 @@ export function DashboardShell() {
               <MapLegendDot label="Medio" className="bg-amber-500" />
               <MapLegendDot label="Bajo" className="bg-rose-600" />
               <span className="rounded-full bg-accent-soft px-3 py-1 text-xs font-semibold text-accent">
-                {status === "loading" ? "Cargando" : "OpenStreetMap activo"}
+                {status === "loading"
+                  ? "Cargando"
+                  : `OpenStreetMap activo (${mapBusinesses.length})`}
               </span>
             </div>
           </div>
-          <MapView businesses={filteredBusinesses} />
+          <MapView businesses={mapBusinesses} onBoundsChange={setViewportBounds} />
         </div>
 
-        <OpportunityList businesses={filteredBusinesses} />
+        <OpportunityList businesses={filteredBusinesses} maxItems={MAX_OPPORTUNITIES} />
       </section>
 
       <div className="pointer-events-none fixed right-4 bottom-4 z-50 sm:right-6 sm:bottom-6">

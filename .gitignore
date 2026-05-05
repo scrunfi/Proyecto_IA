@@ -1,0 +1,23 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+
+# Environment files (local secrets)
+.env
+.env.local
+.env.*.local
+services/api/.env
+apps/web/.env.local
+
+# Python backend artifacts
+services/api/.venv/
+services/api/**/__pycache__/
+services/api/**/*.pyc
+services/api/**/*.pyo
+
+# Keep example environment template versioned
+!services/api/.env.example

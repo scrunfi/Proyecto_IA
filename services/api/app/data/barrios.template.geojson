@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Nombre del barrio"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-2.4600, 36.8400],
+            [-2.4500, 36.8400],
+            [-2.4500, 36.8300],
+            [-2.4600, 36.8300],
+            [-2.4600, 36.8400]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
-import { businesses } from "@/lib/mock-data";
+import { backendFetch } from "@/lib/backend-client";
+import { toBusiness } from "@/lib/business-adapter";
 import { getScoreTheme } from "@/lib/score-theme";
 
 type BusinessDetailPageProps = {
@@ -9,36 +11,43 @@ type BusinessDetailPageProps = {
 
 export default async function BusinessDetailPage({ params }: BusinessDetailPageProps) {
   const { id } = await params;
-  const business = businesses.find((item) => item.id === id);
+  let business: ReturnType<typeof toBusiness>;
+  let benchmark = {
+    percentile: 0,
+    neighborhoodAvg: 0,
+    topQuartile: 0,
+  };
+  let recommendations: string[] = [];
 
-  if (!business) {
-    return (
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-red-900">
-          No se encontro el negocio solicitado.
-        </div>
-        <Link
-          href="/"
-          className="inline-flex w-fit rounded-full border border-line px-4 py-2 text-sm font-semibold hover:bg-zinc-100"
-        >
-          Volver al dashboard
-        </Link>
-      </div>
-    );
+  try {
+    const detail = await backendFetch<{
+      business: {
+        _id: string;
+        name?: string;
+        category?: string;
+        subcategory?: string;
+        score?: number;
+        gap?: number;
+        reviews?: number;
+        location?: { coordinates?: [number, number] };
+        barrio?: { name?: string };
+      };
+      benchmark: {
+        percentile: number;
+        neighborhoodAvg: number;
+        topQuartile: number;
+      };
+      recommendations: string[];
+    }>(`/shops/id/${id}/detail`);
+    business = toBusiness(detail.business);
+    benchmark = detail.benchmark;
+    recommendations = detail.recommendations;
+  } catch {
+    notFound();
   }
 
-  const benchmark = {
-    percentile: Math.max(10, 100 - business.gap),
-    neighborhoodAvg: Math.max(0, business.score - 7),
-    topQuartile: Math.min(100, business.score + business.gap),
-  };
-
-  const recommendations = [
-    "Completa y unifica datos de contacto y horario en todos los canales.",
-    "Publica 2 actualizaciones semanales con oferta clara y CTA local.",
-    "Activa solicitud de resenas post-compra para subir volumen y calidad.",
-  ];
   const scoreTheme = getScoreTheme(business.score);
+  const sectorLabel = business.subcategory ?? business.category;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -48,7 +57,7 @@ export default async function BusinessDetailPage({ params }: BusinessDetailPageP
         </p>
         <h1 className="mt-2 font-serif text-3xl leading-tight sm:text-4xl">{business.name}</h1>
         <p className="mt-2 text-sm text-zinc-700">
-          {business.neighborhood} - {business.category}
+          {business.neighborhood} - {sectorLabel}
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Pill
