@@ -81,19 +81,28 @@ def compute_score(tags: dict) -> int:
 
     social_keys = [
         "contact:facebook",
+        "facebook",
         "contact:instagram",
+        "instagram",
         "contact:linkedin",
+        "linkedin",
         "contact:twitter",
+        "twitter",
         "contact:tiktok",
+        "tiktok",
     ]
     if any(tags.get(key) for key in social_keys):
         score += 8
 
     payment_keys = [
         "payment:cards",
+        "cards",
         "payment:credit_cards",
+        "credit_cards",
         "payment:debit_cards",
+        "debit_cards",
         "payment:contactless",
+        "contactless",
     ]
     if any(tags.get(key) == "yes" for key in payment_keys):
         score += 6
