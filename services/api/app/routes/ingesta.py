@@ -229,12 +229,11 @@ async def list_shops(
 async def google_reviews_sync(limit: int = 100):
 
     processed = 0
+    skipped = 0
     duplicates = 0
     invalid_coords = 0
     google_failures = 0
     errors = 0
-
-    duplicated_shops = []
 
     cursor = shops_collection.aggregate([
         {
@@ -256,86 +255,141 @@ async def google_reviews_sync(limit: int = 100):
 
         print(f"Procesando shop_id={shop['_id']} - {shop.get('name')}")
 
-        # verificar si ya existe review
-        existing = await shop_reviews_collection.find_one({
-            "shop_id": shop["_id"]
-        })
-
-        if existing:
-
-            duplicates += 1
-
-            duplicated_shops.append({
-                "shop_id": str(shop["_id"]),
-                "name": shop.get("name"),
-                "existing_review_id": str(existing.get("_id"))
-            })
-
-            print("Ya existe review para shop_id=", shop["_id"], "- saltando")
-
-            continue
-
         try:
 
+            # COORDENADAS DE NEGOCIO
             location = shop.get("location", {})
             coords = location.get("coordinates", [])
 
-            # validar coords
             if len(coords) != 2:
-
                 invalid_coords += 1
-
-                print("Coords inválidas para shop_id=", shop["_id"])
-
+                skipped += 1
                 continue
 
             lon, lat = coords
 
-            google_data = await fetch_google_reviews(
-                shop.get("name", ""),
-                lat,
-                lon
-            )
+            # CONFIG DE REINTENTOS Y MAXIMO DE INTENTOS
+            MAX_REVIEWS = 5
+            MAX_ATTEMPTS = 3
 
-            if not google_data:
+            all_reviews = []
+            attempts = 0
+            used_place_ids = set()
+            google_data = None
 
-                google_failures += 1
+            while len(all_reviews) < MAX_REVIEWS and attempts < MAX_ATTEMPTS:
 
-                print("Google no devolvió datos para shop_id=", shop["_id"])
+                attempts += 1
 
+                google_data = await fetch_google_reviews(
+                    shop.get("name", ""),
+                    lat,
+                    lon
+                )
+
+                if not google_data:
+                    google_failures += 1
+                    continue
+
+                place_id = google_data["place_id"]
+
+                # evitar repetir mismo lugar si ya aparecio en intentos anteriores
+                if place_id in used_place_ids:
+                    continue
+
+                used_place_ids.add(place_id)
+
+                # FILTRO REVIEWS
+                filtered_reviews = [
+                    r for r in google_data.get("reviews", [])
+                    if r.get("text")
+                    and r["text"].strip()
+                    and r.get("rating", 0) < 3
+                ]
+
+                all_reviews.extend(filtered_reviews)
+
+                all_reviews = all_reviews[:MAX_REVIEWS]
+
+            # si no hay reviews útiles
+            if len(all_reviews) == 0:
+                skipped += 1
                 continue
 
-            await shop_reviews_collection.insert_one({
-                "shop_id": shop["_id"],
-                "google_place_id": google_data["place_id"],
-                "rating": google_data["rating"],
-                "user_ratings_total": google_data["user_ratings_total"],
-                "reviews": google_data["reviews"]
+            # EXISTE EN MONGO
+            existing = await shop_reviews_collection.find_one({
+                "shop_id": shop["_id"]
             })
 
-            # marcar como sincronizado
+            if existing:
+
+                duplicates += 1
+
+                old_reviews = existing.get("reviews", [])
+
+                # MERGE REVIEWS
+                combined = old_reviews + all_reviews
+
+                seen = set()
+                merged_reviews = []
+
+                for r in combined:
+                    text = r.get("text", "").strip()
+
+                    if not text:
+                        continue
+
+                    if text in seen:
+                        continue
+
+                    seen.add(text)
+                    merged_reviews.append(r)
+
+                await shop_reviews_collection.update_one(
+                    {"shop_id": shop["_id"]},
+                    {
+                        "$set": {
+                            "reviews": merged_reviews,
+                            "google_place_id": google_data["place_id"] if google_data else None,
+                            "rating": google_data["rating"] if google_data else None,
+                            "user_ratings_total": google_data["user_ratings_total"] if google_data else None
+                        }
+                    }
+                )
+
+                print("Actualizado shop_id=", shop["_id"])
+
+            else:
+
+                await shop_reviews_collection.insert_one({
+                    "shop_id": shop["_id"],
+                    "google_place_id": google_data["place_id"],
+                    "rating": google_data["rating"],
+                    "user_ratings_total": google_data["user_ratings_total"],
+                    "reviews": all_reviews
+                })
+
+                print("Insertado en shop_id=", shop["_id"])
+
+            # MARCAR COMO PROCESADO CORRECTAMENTE
             await shops_collection.update_one(
                 {"_id": shop["_id"]},
                 {"$set": {"reviews_synced": True}}
             )
 
-            print("Google review importada para shop_id=", shop["_id"])
-
             processed += 1
 
         except Exception as e:
-
             print("ERROR:", e)
-
             errors += 1
 
     return {
         "processed": processed,
+        "skipped": skipped,
         "duplicates": duplicates,
         "invalid_coords": invalid_coords,
         "google_failures": google_failures,
-        "errors": errors,
-        "duplicated_shops": duplicated_shops
+        "errors": errors
     }
 
 @router.get("/test-google")
