@@ -152,12 +152,16 @@ async def list_shops(
     min_score: int = Query(default=0, ge=0, le=100),
     limit: int = Query(default=50, ge=1, le=5000),
     skip: int = Query(default=0, ge=0),
+    active_only: bool = Query(default=True),
     south: float | None = None,
     west: float | None = None,
     north: float | None = None,
     east: float | None = None,
 ):
-    filters = {"active": True, "score": {"$gte": min_score}}
+    filters = {"score": {"$gte": min_score}}
+
+    if active_only:
+        filters["active"] = True
 
     if barrio:
         filters["barrio.name"] = barrio
@@ -191,6 +195,7 @@ async def list_shops(
             "barrio": barrio,
             "category": category,
             "min_score": min_score,
+            "active_only": active_only,
         },
         "shops": shops,
     }

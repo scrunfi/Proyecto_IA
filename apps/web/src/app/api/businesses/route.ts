@@ -4,6 +4,7 @@ import { backendFetch } from "@/lib/backend-client";
 import { toBusiness } from "@/lib/business-adapter";
 
 type ShopsResponse = {
+  total: number;
   shops: Array<{
     _id: string;
     name?: string;
@@ -23,7 +24,12 @@ export async function GET(request: NextRequest) {
   const north = searchParams.get("north");
   const east = searchParams.get("east");
 
-  const params = new URLSearchParams({ limit: "1000" });
+  const pageSize = 5000;
+  const params = new URLSearchParams({
+    limit: String(pageSize),
+    skip: "0",
+    active_only: "false",
+  });
   if (south && west && north && east) {
     params.set("south", south);
     params.set("west", west);
@@ -31,8 +37,22 @@ export async function GET(request: NextRequest) {
     params.set("east", east);
   }
 
-  const payload = await backendFetch<ShopsResponse>(`/shops?${params.toString()}`);
-  const businesses = payload.shops.map(toBusiness);
+  const allShops: ShopsResponse["shops"] = [];
+  let total = Number.POSITIVE_INFINITY;
+
+  while (allShops.length < total) {
+    params.set("skip", String(allShops.length));
+    const payload = await backendFetch<ShopsResponse>(`/shops?${params.toString()}`);
+    total = payload.total;
+
+    if (payload.shops.length === 0) {
+      break;
+    }
+
+    allShops.push(...payload.shops);
+  }
+
+  const businesses = allShops.map(toBusiness);
   const neighborhoods = Array.from(new Set(businesses.map((item) => item.neighborhood))).sort();
 
   return NextResponse.json({

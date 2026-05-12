@@ -8,7 +8,6 @@ import { OpportunityList } from "@/components/business/opportunity-list";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { MapView } from "@/components/map/map-view";
 import { getBusinesses } from "@/lib/api-client";
-import type { ViewportBounds } from "@/lib/api-client";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
 
@@ -147,25 +146,23 @@ export function DashboardShell() {
   const [neighborhoods, setNeighborhoods] = useState<string[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [copyState, setCopyState] = useState<"idle" | "ok" | "error">("idle");
-  const [viewportBounds, setViewportBounds] = useState<ViewportBounds | undefined>();
-
   useEffect(() => {
     const timer = window.setTimeout(async () => {
       try {
         setStatus("loading");
-        const payload = await getBusinesses(viewportBounds);
+        const payload = await getBusinesses();
         setBusinesses(payload.businesses);
         setNeighborhoods(payload.neighborhoods);
         setStatus("ready");
       } catch {
         setStatus("error");
       }
-    }, viewportBounds ? 350 : 0);
+    }, 0);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [viewportBounds]);
+  }, []);
 
   const selectedNeighborhood = searchParams.get("barrio") ?? "all";
   const selectedCategory =
@@ -491,7 +488,7 @@ export function DashboardShell() {
               </span>
             </div>
           </div>
-          <MapView businesses={mapBusinesses} onBoundsChange={setViewportBounds} />
+          <MapView businesses={mapBusinesses} />
         </div>
 
         <OpportunityList businesses={filteredBusinesses} maxItems={MAX_OPPORTUNITIES} />
