@@ -227,10 +227,14 @@ async def list_shops(
 
 @router.post("/google-reviews-sync/{limit}")
 async def google_reviews_sync(limit: int = 100):
-   
+
     processed = 0
-    skipped = 0
+    duplicates = 0
+    invalid_coords = 0
+    google_failures = 0
     errors = 0
+
+    duplicated_shops = []
 
     cursor = shops_collection.aggregate([
         {
@@ -249,28 +253,43 @@ async def google_reviews_sync(limit: int = 100):
     ])
 
     async for shop in cursor:
+
         print(f"Procesando shop_id={shop['_id']} - {shop.get('name')}")
-        
-        # verificar si YA existe review
+
+        # verificar si ya existe review
         existing = await shop_reviews_collection.find_one({
             "shop_id": shop["_id"]
         })
 
-        print("Existing review:", existing)
+        if existing:
 
-        if existing != None:
-            skipped += 1
+            duplicates += 1
+
+            duplicated_shops.append({
+                "shop_id": str(shop["_id"]),
+                "name": shop.get("name"),
+                "existing_review_id": str(existing.get("_id"))
+            })
+
+            print("Ya existe review para shop_id=", shop["_id"], "- saltando")
+
             continue
 
         try:
+
             location = shop.get("location", {})
             coords = location.get("coordinates", [])
 
-            lon, lat = coords
-
+            # validar coords
             if len(coords) != 2:
-                skipped += 1
+
+                invalid_coords += 1
+
+                print("Coords inválidas para shop_id=", shop["_id"])
+
                 continue
+
+            lon, lat = coords
 
             google_data = await fetch_google_reviews(
                 shop.get("name", ""),
@@ -279,7 +298,11 @@ async def google_reviews_sync(limit: int = 100):
             )
 
             if not google_data:
-                skipped += 1
+
+                google_failures += 1
+
+                print("Google no devolvió datos para shop_id=", shop["_id"])
+
                 continue
 
             await shop_reviews_collection.insert_one({
@@ -290,7 +313,7 @@ async def google_reviews_sync(limit: int = 100):
                 "reviews": google_data["reviews"]
             })
 
-            # Marcamos el shop como review activo para que no sepa que ya fue procesado por google y no vuelva a intentar
+            # marcar como sincronizado
             await shops_collection.update_one(
                 {"_id": shop["_id"]},
                 {"$set": {"reviews_synced": True}}
@@ -301,15 +324,19 @@ async def google_reviews_sync(limit: int = 100):
             processed += 1
 
         except Exception as e:
+
             print("ERROR:", e)
+
             errors += 1
 
     return {
         "processed": processed,
-        "skipped": skipped,
-        "errors": errors
+        "duplicates": duplicates,
+        "invalid_coords": invalid_coords,
+        "google_failures": google_failures,
+        "errors": errors,
+        "duplicated_shops": duplicated_shops
     }
-
 
 @router.get("/test-google")
 async def test_google():
