@@ -232,13 +232,21 @@ async def google_reviews_sync(limit: int = 100):
     skipped = 0
     errors = 0
 
-    # sacar shops
-    cursor = shops_collection.find({
-        "$or": [
-            {"reviews_synced": {"$exists": False}},
-            {"reviews_synced": False}
-        ]
-    }).limit(limit)
+    cursor = shops_collection.aggregate([
+        {
+            "$match": {
+                "$or": [
+                    {"reviews_synced": {"$exists": False}},
+                    {"reviews_synced": False}
+                ]
+            }
+        },
+        {
+            "$sample": {
+                "size": limit
+            }
+        }
+    ])
 
     async for shop in cursor:
         print(f"Procesando shop_id={shop['_id']} - {shop.get('name')}")

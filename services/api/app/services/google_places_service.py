@@ -57,6 +57,8 @@ async def fetch_google_reviews(name: str, lat: float, lon: float):
                 "place_id": place_id,
                 "fields": "name,rating,reviews,user_ratings_total",
                 "reviews_sort": "newest",
+                "language": "es",
+                "translated": "true",
                 "key": API_KEY
             }
 
