@@ -14,7 +14,7 @@ type OpportunityListProps = {
 export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListProps) {
   if (businesses.length === 0) {
     return (
-      <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm">
+      <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm overflow-y-auto scroll-smooth">
         <h2 className="mb-3 font-semibold">Top oportunidades</h2>
         <p className="rounded-2xl border border-line bg-surface-2 p-4 text-sm text-zinc-600">
           No hay negocios para los filtros seleccionados.
@@ -29,7 +29,7 @@ export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListP
     .slice(0, maxItems);
 
   return (
-    <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm">
+    <aside className="rounded-3xl border border-line bg-surface p-4 shadow-sm h-[425px] overflow-y-auto scroll-smooth">
       <h2 className="mb-3 font-semibold">Top oportunidades</h2>
       <motion.div
         className="space-y-3"

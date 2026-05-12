@@ -476,9 +476,9 @@ export function DashboardShell() {
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[1.45fr_1fr]">
-        <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-sm">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4">
+      <section className="grid gap-6 lg:grid-cols-[1.45fr_1fr] h-[1fr]">
+        <div className="h-fit overflow-hidden rounded-3xl border border-line bg-surface shadow-sm">
+          <div className="flex items-center justify-between border-b border-line px-5 py-4 h-fit">
             <h2 className="font-semibold">Mapa de oportunidades</h2>
             <div className="flex items-center gap-2">
               <MapLegendDot label="Alto" className="bg-emerald-600" />

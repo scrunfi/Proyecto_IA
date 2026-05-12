@@ -1,3 +1,5 @@
+from urllib import response
+
 from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -6,6 +8,9 @@ from app.database.mongo import ingesta_runs_collection, shops_collection
 from app.services.barrios_service import infer_barrio_name, load_barrios_geojson
 from app.services.normalizer import normalize_element
 from app.services.overpass_service import fetch_overpass_shops
+
+from app.services.google_places_service import fetch_google_reviews
+from app.database.mongo import shops_collection, shop_reviews_collection
 
 router = APIRouter()
 
@@ -144,6 +149,26 @@ async def list_ingesta_runs(
         "runs": runs,
     }
 
+@router.get("/reviews-test")
+async def reviews_test():
+
+    reviews = []
+
+    cursor = shop_reviews_collection.find()
+
+    async for doc in cursor:
+
+        reviews.append({
+            "shop_id": doc.get("shop_id"),
+            "rating": doc.get("rating"),
+            "user_ratings_total": doc.get("user_ratings_total"),
+            "reviews": doc.get("reviews", [])
+        })
+
+    return {
+        "total": len(reviews),
+        "data": reviews
+    }
 
 @router.get("/shops")
 async def list_shops(
@@ -195,6 +220,94 @@ async def list_shops(
         "shops": shops,
     }
 
+@router.post("/google-reviews-sync/{limit}")
+async def google_reviews_sync(limit: int = 100):
+   
+    processed = 0
+    skipped = 0
+    errors = 0
+
+    # sacar shops
+    cursor = shops_collection.find({
+        "$or": [
+            {"reviews_synced": {"$exists": False}},
+            {"reviews_synced": False}
+        ]
+    }).limit(limit)
+
+    async for shop in cursor:
+        print(f"Procesando shop_id={shop['_id']} - {shop.get('name')}")
+        
+        # verificar si YA existe review
+        existing = await shop_reviews_collection.find_one({
+            "shop_id": shop["_id"]
+        })
+
+        print("Existing review:", existing)
+
+        if existing != None:
+            skipped += 1
+            continue
+
+        try:
+            location = shop.get("location", {})
+            coords = location.get("coordinates", [])
+
+            lon, lat = coords
+
+            if len(coords) != 2:
+                skipped += 1
+                continue
+
+            google_data = await fetch_google_reviews(
+                shop.get("name", ""),
+                lat,
+                lon
+            )
+
+            if not google_data:
+                skipped += 1
+                continue
+
+            await shop_reviews_collection.insert_one({
+                "shop_id": shop["_id"],
+                "google_place_id": google_data["place_id"],
+                "rating": google_data["rating"],
+                "user_ratings_total": google_data["user_ratings_total"],
+                "reviews": google_data["reviews"]
+            })
+
+            # Marcamos el shop como review activo para que no sepa que ya fue procesado por google y no vuelva a intentar
+            await shops_collection.update_one(
+                {"_id": shop["_id"]},
+                {"$set": {"reviews_synced": True}}
+            )
+
+            print("Google review importada para shop_id=", shop["_id"])
+
+            processed += 1
+
+        except Exception as e:
+            print("ERROR:", e)
+            errors += 1
+
+    return {
+        "processed": processed,
+        "skipped": skipped,
+        "errors": errors
+    }
+
+
+@router.get("/test-google")
+async def test_google():
+
+    data = await fetch_google_reviews(
+        "Moeve",
+        36.845861,
+        -2.450111
+    )
+
+    return data
 
 @router.get("/shops/id/{shop_id}")
 async def get_shop_by_id(shop_id: str):

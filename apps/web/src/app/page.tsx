@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 h-auto">
       <header className="rounded-3xl border border-line bg-surface px-6 py-8 shadow-sm">
         <p className="text-xs font-semibold tracking-[0.2em] text-accent uppercase">
           Barrio Competitivo Almeria
