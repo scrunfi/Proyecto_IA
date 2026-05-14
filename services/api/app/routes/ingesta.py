@@ -787,7 +787,7 @@ async def shops_quality_issues(
 
 @router.post("/shops/repair-barrios")
 async def repair_barrios(
-    only_missing: bool = True,
+    only_missing: bool = False,
     use_explicit_tags: bool = True,
     limit: int = Query(default=2000, ge=1, le=20000),
 ):
@@ -897,7 +897,7 @@ async def barrios_target_counts():
         "Almeria",
         "Viator",
         "Huercal de Almeria",
-        "Aguadulce",
+        "Roquetas de Mar",
         "La Canada y El Alquian",
     ]
 

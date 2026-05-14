@@ -59,15 +59,6 @@ def infer_barrio_name(
     tags: dict,
     use_explicit_tags: bool = True,
 ) -> tuple[str, str]:
-    if use_explicit_tags:
-        explicit = (
-            tags.get("addr:suburb")
-            or tags.get("addr:neighbourhood")
-            or tags.get("is_in:suburb")
-        )
-        if explicit:
-            return explicit, "tag"
-
     if lat is None or lon is None:
         return "Sin barrio", "none"
 
@@ -89,6 +80,15 @@ def infer_barrio_name(
             if point_in_polygon(lon, lat, ring):
                 name = props.get("name") or props.get("barrio") or "Sin barrio"
                 return name, "geojson"
+
+    if use_explicit_tags:
+        explicit = (
+            tags.get("addr:suburb")
+            or tags.get("addr:neighbourhood")
+            or tags.get("is_in:suburb")
+        )
+        if explicit:
+            return explicit, "tag"
 
     if point_in_bbox(lon=lon, lat=lat, bbox=FALLBACK_BARRIO_BBOX):
         return FALLBACK_BARRIO_NAME, "fallback"
