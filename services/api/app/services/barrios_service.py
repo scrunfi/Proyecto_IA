@@ -4,6 +4,10 @@ import warnings
 from functools import lru_cache
 
 
+FALLBACK_BARRIO_NAME = os.getenv("FALLBACK_BARRIO_NAME", "Almeria")
+FALLBACK_BARRIO_BBOX = os.getenv("FALLBACK_BARRIO_BBOX", "36.76,-2.67,36.93,-2.29")
+
+
 def point_in_polygon(lon: float, lat: float, polygon: list[list[float]]) -> bool:
     inside = False
     j = len(polygon) - 1
@@ -17,6 +21,14 @@ def point_in_polygon(lon: float, lat: float, polygon: list[list[float]]) -> bool
             inside = not inside
         j = i
     return inside
+
+
+def point_in_bbox(lon: float, lat: float, bbox: str) -> bool:
+    try:
+        south, west, north, east = [float(part.strip()) for part in bbox.split(",")]
+    except Exception:
+        return False
+    return south <= lat <= north and west <= lon <= east
 
 
 @lru_cache(maxsize=1)
@@ -41,14 +53,20 @@ def load_barrios_geojson() -> list[dict]:
     return features
 
 
-def infer_barrio_name(lat: float | None, lon: float | None, tags: dict) -> tuple[str, str]:
-    explicit = (
-        tags.get("addr:suburb")
-        or tags.get("addr:neighbourhood")
-        or tags.get("is_in:suburb")
-    )
-    if explicit:
-        return explicit, "tag"
+def infer_barrio_name(
+    lat: float | None,
+    lon: float | None,
+    tags: dict,
+    use_explicit_tags: bool = True,
+) -> tuple[str, str]:
+    if use_explicit_tags:
+        explicit = (
+            tags.get("addr:suburb")
+            or tags.get("addr:neighbourhood")
+            or tags.get("is_in:suburb")
+        )
+        if explicit:
+            return explicit, "tag"
 
     if lat is None or lon is None:
         return "Sin barrio", "none"
@@ -71,5 +89,8 @@ def infer_barrio_name(lat: float | None, lon: float | None, tags: dict) -> tuple
             if point_in_polygon(lon, lat, ring):
                 name = props.get("name") or props.get("barrio") or "Sin barrio"
                 return name, "geojson"
+
+    if point_in_bbox(lon=lon, lat=lat, bbox=FALLBACK_BARRIO_BBOX):
+        return FALLBACK_BARRIO_NAME, "fallback"
 
     return "Sin barrio", "none"

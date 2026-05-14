@@ -5,7 +5,7 @@ import os
 OVERPASS_URL = os.getenv("OVERPASS_API_URL", "https://overpass-api.de/api/interpreter")
 OVERPASS_TIMEOUT = int(os.getenv("OVERPASS_TIMEOUT_SECONDS", "60"))
 OVERPASS_USER_AGENT = os.getenv("OVERPASS_USER_AGENT", "ProyectoAlmeria/1.0")
-OVERPASS_BBOX = os.getenv("OVERPASS_BBOX", "36.80,-2.52,36.88,-2.40")
+OVERPASS_BBOX = os.getenv("OVERPASS_BBOX", "36.76,-2.67,36.93,-2.29")
 
 def fetch_overpass_shops():
     south, west, north, east = [part.strip() for part in OVERPASS_BBOX.split(",")]

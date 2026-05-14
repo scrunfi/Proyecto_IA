@@ -98,6 +98,14 @@ const CATEGORY_GROUPS: Array<{ label: string; patterns: RegExp[] }> = [
   },
 ];
 
+const CATEGORY_LABELS = new Set([
+  ...CATEGORY_GROUPS.map((group) => group.label),
+  "Servicios locales",
+  "Comercio especializado",
+  "Creatividad y medios",
+  "Ocio y experiencias",
+]);
+
 function normalizeCategory(value: string) {
   return value
     .normalize("NFD")
@@ -136,7 +144,6 @@ function getCategoryGroup(value: string) {
 export function DashboardShell() {
   const MAX_MAP_MARKERS = 300;
   const MAX_OPPORTUNITIES = 120;
-  const MAX_SECTOR_OPTIONS = 14;
 
   const router = useRouter();
   const pathname = usePathname();
@@ -168,9 +175,16 @@ export function DashboardShell() {
   const selectedCategory =
     searchParams.get("sector") ?? searchParams.get("rubro") ?? "all";
   const selectedGroupedCategory =
-    selectedCategory === "all" ? "all" : getCategoryGroup(selectedCategory);
+    selectedCategory === "all"
+      ? "all"
+      : CATEGORY_LABELS.has(selectedCategory)
+        ? selectedCategory
+        : getCategoryGroup(selectedCategory);
   const rawScore = Number(searchParams.get("score_min") ?? "0");
   const minScore = Number.isNaN(rawScore) ? 0 : Math.max(0, Math.min(100, rawScore));
+  const commentsParam = searchParams.get("comments");
+  const commentsFilter: "all" | "with" | "without" =
+    commentsParam === "with" || commentsParam === "without" ? commentsParam : "all";
 
   const groupedBusinesses = useMemo(() => {
     return businesses.map((item) => ({
@@ -179,30 +193,28 @@ export function DashboardShell() {
     }));
   }, [businesses]);
 
-  const categories = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    groupedBusinesses.forEach((item) => {
-      counts.set(item.groupedCategory, (counts.get(item.groupedCategory) ?? 0) + 1);
-    });
-
-    const ranked = Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, MAX_SECTOR_OPTIONS)
-      .map(([group]) => group);
-
-    if (selectedGroupedCategory !== "all" && !ranked.includes(selectedGroupedCategory)) {
-      ranked.push(selectedGroupedCategory);
-    }
-
-    return ranked;
-  }, [groupedBusinesses, selectedGroupedCategory]);
-
-  const groupedSelectedCategory = selectedGroupedCategory;
   const effectiveSelectedNeighborhood =
     selectedNeighborhood === "all" || neighborhoods.includes(selectedNeighborhood)
       ? selectedNeighborhood
       : "all";
+
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    const source =
+      effectiveSelectedNeighborhood === "all"
+        ? groupedBusinesses
+        : groupedBusinesses.filter((item) => item.neighborhood === effectiveSelectedNeighborhood);
+
+    source.forEach((item) => {
+      counts.set(item.groupedCategory, (counts.get(item.groupedCategory) ?? 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([group]) => group);
+  }, [groupedBusinesses, effectiveSelectedNeighborhood]);
+
+  const groupedSelectedCategory = selectedGroupedCategory;
   const effectiveSelectedCategory =
     groupedSelectedCategory === "all" || categories.includes(groupedSelectedCategory)
       ? groupedSelectedCategory
@@ -215,24 +227,31 @@ export function DashboardShell() {
       const categoryMatch =
         effectiveSelectedCategory === "all" || item.groupedCategory === effectiveSelectedCategory;
       const scoreMatch = item.score >= minScore;
+      const commentsMatch =
+        commentsFilter === "all" ||
+        (commentsFilter === "with" && item.hasComments) ||
+        (commentsFilter === "without" && !item.hasComments);
 
-      return neighborhoodMatch && categoryMatch && scoreMatch;
+      return neighborhoodMatch && categoryMatch && scoreMatch && commentsMatch;
     });
-  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, minScore]);
+  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, minScore, commentsFilter]);
 
   const activeFilterCount =
     Number(effectiveSelectedNeighborhood !== "all") +
     Number(effectiveSelectedCategory !== "all") +
-    Number(minScore > 0);
+    Number(minScore > 0) +
+    Number(commentsFilter !== "all");
 
   function updateUrlFilters(next: {
     neighborhood?: string;
     category?: string;
     score?: number;
+    comments?: "all" | "with" | "without";
   }) {
     const neighborhood = next.neighborhood ?? effectiveSelectedNeighborhood;
     const category = next.category ?? effectiveSelectedCategory;
     const score = next.score ?? minScore;
+    const comments = next.comments ?? commentsFilter;
 
     const params = new URLSearchParams();
     if (neighborhood !== "all") {
@@ -243,6 +262,9 @@ export function DashboardShell() {
     }
     if (score > 0) {
       params.set("score_min", String(score));
+    }
+    if (comments !== "all") {
+      params.set("comments", comments);
     }
 
     const query = params.toString();
@@ -320,18 +342,28 @@ export function DashboardShell() {
           label="Barrios activos"
           value={selectedNeighborhood === "all" ? undefined : selectedNeighborhood}
           numericValue={selectedNeighborhood === "all" ? neighborhoods.length : undefined}
+          tooltip="Numero de barrios que forman parte del analisis en la vista actual, despues de aplicar los filtros."
         />
         <MetricCard
           label="Negocios analizados"
           numericValue={filteredBusinesses.length}
+          tooltip="Total de negocios evaluados y mostrados con la configuracion de filtros actual."
         />
         <MetricCard
           label="Score medio"
           numericValue={summary.avgScore}
           suffix="/100"
           toneClassName={summaryTheme.chipClassName}
+          tooltip="Promedio del score de oportunidad de los negocios visibles. Se expresa en escala 0-100; valores mas altos indican mayor oportunidad."
+          tooltipAlign="right"
         />
-        <MetricCard label="Brecha media" numericValue={summary.avgGap} suffix=" pts" />
+        <MetricCard
+          label="Brecha media"
+          numericValue={summary.avgGap}
+          suffix=" pts"
+          tooltip="Promedio del gap de los negocios visibles respecto a su objetivo o referencia. Se muestra en puntos (pts)."
+          tooltipAlign="right"
+        />
       </section>
 
       <section className="rounded-3xl border border-line bg-surface p-4 shadow-sm">
@@ -389,13 +421,26 @@ export function DashboardShell() {
                   </button>
                 </span>
               )}
+              {commentsFilter !== "all" && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
+                  {commentsFilter === "with" ? "Solo con comentarios" : "Solo sin comentarios"}
+                  <button
+                    type="button"
+                    onClick={() => updateUrlFilters({ comments: "all" })}
+                    className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                    aria-label="Quitar filtro de comentarios"
+                  >
+                    x
+                  </button>
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
-                updateUrlFilters({ neighborhood: "all", category: "all", score: 0 });
+                updateUrlFilters({ neighborhood: "all", category: "all", score: 0, comments: "all" });
               }}
               className="rounded-full border border-line px-4 py-2 text-sm font-semibold hover:bg-zinc-100"
             >
@@ -411,7 +456,7 @@ export function DashboardShell() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
           <label className="flex flex-col gap-2 text-sm">
             <span className="font-semibold">Barrio</span>
             <select
@@ -470,6 +515,25 @@ export function DashboardShell() {
               className="accent-[var(--accent)]"
             />
           </label>
+
+          <label className="flex flex-col gap-2 text-sm">
+            <span className="font-semibold">Comentarios</span>
+            <select
+              value={commentsFilter}
+              onChange={(event) => {
+                const value =
+                  event.target.value === "with" || event.target.value === "without"
+                    ? event.target.value
+                    : "all";
+                updateUrlFilters({ comments: value });
+              }}
+              className="rounded-xl border border-line bg-white px-3 py-2"
+            >
+              <option value="all">Mostrar todos</option>
+              <option value="with">Ocultar sin comentarios</option>
+              <option value="without">Solo sin comentarios</option>
+            </select>
+          </label>
         </div>
       </section>
 
@@ -488,7 +552,10 @@ export function DashboardShell() {
               </span>
             </div>
           </div>
-          <MapView businesses={mapBusinesses} />
+          <MapView
+            businesses={mapBusinesses}
+            selectedNeighborhood={effectiveSelectedNeighborhood}
+          />
         </div>
 
         <OpportunityList businesses={filteredBusinesses} maxItems={MAX_OPPORTUNITIES} />

@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
 
@@ -62,12 +63,23 @@ export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListP
               </p>
               <p className="mt-1 font-semibold">{item.name}</p>
               <div className="mt-2 flex items-center justify-between text-sm">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${theme.chipClassName}`}
-                >
-                  Score: {item.score}
+                <span className="inline-flex items-center gap-1.5">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${theme.chipClassName}`}>
+                    Score: {item.score}
+                  </span>
+                  <InfoTooltip
+                    text="Puntuacion de oportunidad de este negocio en escala 0-100."
+                    label="Ayuda sobre score"
+                  />
                 </span>
-                <span className="font-semibold text-accent">Gap: {item.gap} pts</span>
+                <span className="inline-flex items-center gap-1.5 font-semibold text-accent">
+                  <span>Gap: {item.gap} pts</span>
+                  <InfoTooltip
+                    text="Diferencia en puntos entre el valor actual del negocio y su objetivo o referencia. Un gap mayor indica mayor margen de mejora."
+                    label="Ayuda sobre gap"
+                    align="right"
+                  />
+                </span>
               </div>
               <div className="mt-3">
                 <Link

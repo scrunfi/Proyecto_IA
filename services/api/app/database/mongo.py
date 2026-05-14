@@ -24,8 +24,9 @@ async def ensure_indexes() -> None:
     await shops_collection.create_index("barrio.name")
     await shops_collection.create_index("last_seen_at")
 
-    # para saber si ya fue procesado por google
-    await shops_collection.create_index("google_reviews_processed")
+    # para saber si ya fue revisado por el sync de Google
+    await shops_collection.create_index("reviews_sync_attempted")
+    await shops_collection.create_index("reviews_synced")
 
     # INGESTAS CORRIDAS
     await ingesta_runs_collection.create_index("started_at")

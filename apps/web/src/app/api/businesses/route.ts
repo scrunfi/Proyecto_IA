@@ -12,8 +12,16 @@ type ShopsResponse = {
     score?: number;
     gap?: number;
     reviews?: number;
+    hasComments?: boolean;
     location?: { coordinates?: [number, number] };
     barrio?: { name?: string };
+  }>;
+};
+
+type ReviewsIndexResponse = {
+  data: Array<{
+    shop_id?: string;
+    reviews?: Array<{ text?: string }>;
   }>;
 };
 
@@ -40,6 +48,13 @@ export async function GET(request: NextRequest) {
   const allShops: ShopsResponse["shops"] = [];
   let total = Number.POSITIVE_INFINITY;
 
+  const reviewsIndex = await backendFetch<ReviewsIndexResponse>("/reviews-test");
+  const shopsWithComments = new Set(
+    (reviewsIndex.data ?? [])
+      .filter((item) => item.shop_id && Array.isArray(item.reviews) && item.reviews.some((r) => r?.text?.trim()))
+      .map((item) => item.shop_id as string),
+  );
+
   while (allShops.length < total) {
     params.set("skip", String(allShops.length));
     const payload = await backendFetch<ShopsResponse>(`/shops?${params.toString()}`);
@@ -52,7 +67,12 @@ export async function GET(request: NextRequest) {
     allShops.push(...payload.shops);
   }
 
-  const businesses = allShops.map(toBusiness);
+  const businesses = allShops
+    .map((shop) => ({
+      ...shop,
+      hasComments: shopsWithComments.has(shop._id),
+    }))
+    .map(toBusiness);
   const neighborhoods = Array.from(new Set(businesses.map((item) => item.neighborhood))).sort();
 
   return NextResponse.json({

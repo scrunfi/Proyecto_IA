@@ -15,6 +15,110 @@ from app.database.mongo import shops_collection, shop_reviews_collection
 router = APIRouter()
 
 
+def _score_breakdown_from_tags(tags: dict) -> list[dict]:
+    has_website = any(tags.get(key) for key in ["website", "contact:website", "brand:website"])
+    has_phone = any(tags.get(key) for key in ["phone", "contact:phone", "brand:phone"])
+    has_email = any(tags.get(key) for key in ["email", "contact:email", "brand:email"])
+    has_social = any(
+        tags.get(key)
+        for key in [
+            "contact:facebook",
+            "facebook",
+            "contact:instagram",
+            "instagram",
+            "contact:linkedin",
+            "linkedin",
+            "contact:twitter",
+            "twitter",
+            "contact:tiktok",
+            "tiktok",
+        ]
+    )
+    has_opening_hours = bool(tags.get("opening_hours"))
+    has_delivery = tags.get("delivery") == "yes" or tags.get("takeaway") == "yes"
+    has_payment = any(
+        tags.get(key) == "yes"
+        for key in [
+            "payment:cards",
+            "cards",
+            "payment:credit_cards",
+            "credit_cards",
+            "payment:debit_cards",
+            "debit_cards",
+            "payment:contactless",
+            "contactless",
+        ]
+    )
+    has_accessibility = tags.get("wheelchair") in {"yes", "limited"}
+    has_brand = bool(tags.get("brand") or tags.get("operator"))
+    has_address = bool(tags.get("addr:street") and (tags.get("addr:housenumber") or tags.get("addr:postcode")))
+
+    raw_items = [
+        {
+            "label": "Presencia digital",
+            "points": (20 if has_website else 0)
+            + (12 if has_phone else 0)
+            + (8 if has_email else 0)
+            + (8 if has_social else 0),
+            "max_points": 48,
+            "detail": "Web, telefono, email y redes sociales del negocio.",
+        },
+        {
+            "label": "Operacion y servicio",
+            "points": (10 if has_opening_hours else 0)
+            + (8 if has_delivery else 0)
+            + (6 if has_payment else 0)
+            + (3 if has_accessibility else 0),
+            "max_points": 27,
+            "detail": "Horario, opciones de entrega, metodos de pago y accesibilidad.",
+        },
+        {
+            "label": "Identidad y confianza",
+            "points": (8 if has_brand else 0) + (8 if has_address else 0),
+            "max_points": 16,
+            "detail": "Marca u operador y direccion estructurada de la ficha.",
+        },
+        {
+            "label": "Completitud de ficha",
+            "points": 10 + min(19, len(tags)),
+            "max_points": 29,
+            "detail": "Base del modelo y riqueza de metadatos disponibles en OSM.",
+        },
+    ]
+
+    raw_total = sum(item["points"] for item in raw_items)
+    capped_total = max(0, min(100, raw_total))
+    if raw_total <= 0:
+        return [
+            {
+                **item,
+                "points": 0,
+            }
+            for item in raw_items
+        ]
+
+    scaled_points: list[int] = []
+    for item in raw_items:
+        scaled_points.append(int(round((item["points"] / raw_total) * capped_total)))
+
+    delta = capped_total - sum(scaled_points)
+    if delta != 0:
+        scaled_points[0] = max(0, min(raw_items[0]["max_points"], scaled_points[0] + delta))
+
+    breakdown = []
+    for index, item in enumerate(raw_items):
+        breakdown.append(
+            {
+                "label": item["label"],
+                "points": scaled_points[index],
+                "max_points": item["max_points"],
+                "detail": item["detail"],
+            }
+        )
+
+    return breakdown
+
+
 @router.post("/ingesta")
 async def ingesta_shops():
     started_at = datetime.now(timezone.utc)
@@ -239,8 +343,8 @@ async def google_reviews_sync(limit: int = 100):
         {
             "$match": {
                 "$or": [
-                    {"reviews_synced": {"$exists": False}},
-                    {"reviews_synced": False}
+                    {"reviews_sync_attempted": {"$exists": False}},
+                    {"reviews_sync_attempted": False}
                 ]
             }
         },
@@ -264,6 +368,10 @@ async def google_reviews_sync(limit: int = 100):
             if len(coords) != 2:
                 invalid_coords += 1
                 skipped += 1
+                await shops_collection.update_one(
+                    {"_id": shop["_id"]},
+                    {"$set": {"reviews_sync_attempted": True}}
+                )
                 continue
 
             lon, lat = coords
@@ -314,6 +422,10 @@ async def google_reviews_sync(limit: int = 100):
             # si no hay reviews útiles
             if len(all_reviews) == 0:
                 skipped += 1
+                await shops_collection.update_one(
+                    {"_id": shop["_id"]},
+                    {"$set": {"reviews_sync_attempted": True}}
+                )
                 continue
 
             # EXISTE EN MONGO
@@ -374,7 +486,7 @@ async def google_reviews_sync(limit: int = 100):
             # MARCAR COMO PROCESADO CORRECTAMENTE
             await shops_collection.update_one(
                 {"_id": shop["_id"]},
-                {"$set": {"reviews_synced": True}}
+                {"$set": {"reviews_synced": True, "reviews_sync_attempted": True}}
             )
 
             processed += 1
@@ -382,6 +494,10 @@ async def google_reviews_sync(limit: int = 100):
         except Exception as e:
             print("ERROR:", e)
             errors += 1
+            await shops_collection.update_one(
+                {"_id": shop["_id"]},
+                {"$set": {"reviews_sync_attempted": True}}
+            )
 
     return {
         "processed": processed,
@@ -416,6 +532,33 @@ async def get_shop_detail(shop_id: str):
     shop = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.tags": 0})
     if not shop:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
+
+    shop_reviews_doc = await shop_reviews_collection.find_one(
+        {"shop_id": shop_id},
+        {"_id": 0, "reviews": 1, "user_ratings_total": 1},
+    )
+    comments = []
+    reviews_total = int(shop.get("reviews", 0) or 0)
+    if shop_reviews_doc:
+        reviews_list = shop_reviews_doc.get("reviews")
+        if isinstance(reviews_list, list):
+            reviews_total = len(reviews_list)
+
+        comments = [
+            {
+                "text": review.get("text", ""),
+                "rating": review.get("rating"),
+                "author": review.get("author_name"),
+                "relative_time": review.get("relative_time_description"),
+            }
+            for review in shop_reviews_doc.get("reviews", [])
+            if isinstance(review, dict) and review.get("text")
+        ]
+
+    shop["reviews"] = reviews_total
+
+    full_shop_doc = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.tags": 1})
+    tags = ((full_shop_doc or {}).get("osm") or {}).get("tags") or {}
 
     score = int(shop.get("score", 0))
     category = shop.get("category")
@@ -465,10 +608,14 @@ async def get_shop_detail(shop_id: str):
         "topQuartile": max(0, min(100, top_quartile)),
     }
 
+    score_breakdown = _score_breakdown_from_tags(tags)
+
     return {
         "business": shop,
         "benchmark": benchmark,
         "recommendations": recommendations,
+        "comments": comments,
+        "score_breakdown": score_breakdown,
     }
 
 
@@ -641,6 +788,7 @@ async def shops_quality_issues(
 @router.post("/shops/repair-barrios")
 async def repair_barrios(
     only_missing: bool = True,
+    use_explicit_tags: bool = True,
     limit: int = Query(default=2000, ge=1, le=20000),
 ):
     filters = {"active": True, "location.coordinates": {"$exists": True}}
@@ -673,7 +821,12 @@ async def repair_barrios(
             lat = coords[1] if len(coords) > 1 else None
             tags = ((doc.get("osm") or {}).get("tags") or {})
 
-            new_name, new_source = infer_barrio_name(lat=lat, lon=lon, tags=tags)
+            new_name, new_source = infer_barrio_name(
+                lat=lat,
+                lon=lon,
+                tags=tags,
+                use_explicit_tags=use_explicit_tags,
+            )
             current = doc.get("barrio") or {}
             current_name = current.get("name")
             current_source = current.get("source")
@@ -697,6 +850,7 @@ async def repair_barrios(
     return {
         "status": "ok",
         "only_missing": only_missing,
+        "use_explicit_tags": use_explicit_tags,
         "scanned": scanned,
         "updated": updated,
         "unchanged": unchanged,
@@ -734,4 +888,75 @@ async def barrio_by_point(lat: float, lon: float):
             "name": name,
             "source": source,
         },
+    }
+
+
+@router.get("/barrios/target-counts")
+async def barrios_target_counts():
+    target_names = [
+        "Almeria",
+        "Viator",
+        "Huercal de Almeria",
+        "Aguadulce",
+        "La Canada y El Alquian",
+    ]
+
+    rows = await shops_collection.aggregate(
+        [
+            {"$match": {"active": True, "barrio.name": {"$in": target_names}}},
+            {"$group": {"_id": "$barrio.name", "count": {"$sum": 1}}},
+        ]
+    ).to_list(length=20)
+
+    counts_map = {row.get("_id"): int(row.get("count", 0)) for row in rows}
+    counts = [{"name": name, "count": counts_map.get(name, 0)} for name in target_names]
+
+    return {
+        "total_active": await shops_collection.count_documents({"active": True}),
+        "counts": counts,
+    }
+
+
+@router.get("/barrios/sin-barrio-samples")
+async def barrios_sin_barrio_samples(limit: int = Query(default=100, ge=1, le=1000)):
+    filters = {
+        "active": True,
+        "$or": [
+            {"barrio.name": "Sin barrio"},
+            {"barrio.name": {"$exists": False}},
+            {"barrio.name": None},
+        ],
+    }
+
+    projection = {
+        "_id": 1,
+        "name": 1,
+        "category": 1,
+        "barrio": 1,
+        "location.coordinates": 1,
+    }
+
+    rows = await shops_collection.find(filters, projection).limit(limit).to_list(length=limit)
+    total = await shops_collection.count_documents(filters)
+
+    samples = []
+    for row in rows:
+        coords = ((row.get("location") or {}).get("coordinates") or [None, None])
+        lon = coords[0] if len(coords) > 0 else None
+        lat = coords[1] if len(coords) > 1 else None
+        samples.append(
+            {
+                "id": row.get("_id"),
+                "name": row.get("name"),
+                "category": row.get("category"),
+                "barrio": (row.get("barrio") or {}).get("name"),
+                "lat": lat,
+                "lon": lon,
+            }
+        )
+
+    return {
+        "total": total,
+        "limit": limit,
+        "samples": samples,
     }

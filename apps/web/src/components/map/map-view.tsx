@@ -9,6 +9,7 @@ import { getScoreTheme } from "@/lib/score-theme";
 
 type MapViewProps = {
   businesses: Business[];
+  selectedNeighborhood?: string;
   onBoundsChange?: (bounds: {
     south: number;
     west: number;
@@ -19,7 +20,7 @@ type MapViewProps = {
 
 const ALMERIA_CENTER: [number, number] = [-2.4597, 36.834];
 
-export function MapView({ businesses, onBoundsChange }: MapViewProps) {
+export function MapView({ businesses, selectedNeighborhood = "all", onBoundsChange }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const leafletMapRef = useRef<unknown>(null);
   const leafletRef = useRef<unknown>(null);
@@ -107,22 +108,37 @@ export function MapView({ businesses, onBoundsChange }: MapViewProps) {
           addTo: (layer: unknown) => void;
         };
       };
+      latLngBounds: (coords: [number, number][]) => {
+        pad: (value: number) => unknown;
+      };
     };
 
     type LayerRuntime = {
       clearLayers: () => void;
     };
 
+    type MapRuntime = {
+      fitBounds: (bounds: unknown) => void;
+      setView: (center: [number, number], zoom: number) => void;
+    };
+
     const L = leafletRef.current as LeafletRuntime | null;
-    const map = leafletMapRef.current;
+    const map = leafletMapRef.current as MapRuntime | null;
     const markersLayer = markersLayerRef.current as LayerRuntime | null;
     if (!L || !map || !markersLayer) {
       return;
     }
 
     markersLayer.clearLayers();
+    const coords: [number, number][] = [];
 
     businesses.forEach((business) => {
+      const shouldCenter =
+        selectedNeighborhood === "all" || business.neighborhood === selectedNeighborhood;
+      if (shouldCenter) {
+        coords.push([business.lat, business.lon]);
+      }
+
       const theme = getScoreTheme(business.score);
       const sectorLabel = business.subcategory ?? business.category;
       const marker = L.divIcon({
@@ -139,7 +155,16 @@ export function MapView({ businesses, onBoundsChange }: MapViewProps) {
         )
         .addTo(markersLayer);
     });
-  }, [businesses]);
+
+    if (coords.length === 1) {
+      map.setView(coords[0], 15);
+      return;
+    }
+
+    if (coords.length > 1) {
+      map.fitBounds(L.latLngBounds(coords).pad(0.22));
+    }
+  }, [businesses, selectedNeighborhood]);
 
   return <div ref={mapRef} className="h-[360px]" />;
 }

@@ -2,12 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { InfoTooltip } from "@/components/ui/info-tooltip";
+
 type MetricCardProps = {
   label: string;
   value?: string;
   numericValue?: number;
   suffix?: string;
   toneClassName?: string;
+  tooltip?: string;
+  tooltipAlign?: "left" | "right";
 };
 
 export function MetricCard({
@@ -16,6 +20,8 @@ export function MetricCard({
   numericValue,
   suffix,
   toneClassName,
+  tooltip,
+  tooltipAlign,
 }: MetricCardProps) {
   const [animatedValue, setAnimatedValue] = useState(0);
   const [trend, setTrend] = useState<"up" | "down" | "same">("same");
@@ -81,7 +87,12 @@ export function MetricCard({
 
   return (
     <article className="rounded-2xl border border-line bg-surface px-4 py-3 shadow-sm">
-      <p className={`text-xs text-zinc-600 ${toneClassName ?? ""}`}>{label}</p>
+      <div className="flex items-center gap-1.5">
+        <p className={`text-xs text-zinc-600 ${toneClassName ?? ""}`}>{label}</p>
+        {tooltip ? (
+          <InfoTooltip text={tooltip} label={`Ayuda sobre ${label}`} align={tooltipAlign} />
+        ) : null}
+      </div>
       <div className="mt-1 flex items-center gap-2">
         <p
           className={`text-2xl font-semibold transition-colors duration-500 ${

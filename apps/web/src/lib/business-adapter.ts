@@ -4,9 +4,11 @@ type BackendShop = {
   _id: string;
   name?: string;
   category?: string;
+  subcategory?: string;
   score?: number;
   gap?: number;
   reviews?: number;
+  hasComments?: boolean;
   location?: {
     coordinates?: [number, number];
   };
@@ -31,5 +33,6 @@ export function toBusiness(item: BackendShop): Business {
     score: item.score ?? 0,
     gap: item.gap ?? 100,
     reviews: item.reviews ?? 0,
+    hasComments: item.hasComments ?? false,
   };
 }
