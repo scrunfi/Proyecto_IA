@@ -6,6 +6,7 @@ import Link from "next/link";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
+import { getSubsectorLabel } from "@/lib/subsector-label";
 
 type OpportunityListProps = {
   businesses: Business[];
@@ -44,7 +45,7 @@ export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListP
         <AnimatePresence mode="popLayout">
           {sortedBusinesses.map((item) => {
             const theme = getScoreTheme(item.score);
-            const sectorLabel = item.subcategory ?? item.category;
+            const sectorLabel = getSubsectorLabel(item.subcategory ?? item.category);
 
             return (
               <motion.article
@@ -83,7 +84,7 @@ export function OpportunityList({ businesses, maxItems = 120 }: OpportunityListP
               </div>
               <div className="mt-3">
                 <Link
-                  href={`/negocio/${item.id}`}
+                  href={`/negocio/${encodeURIComponent(item.id)}`}
                   className="text-sm font-semibold underline-offset-4 hover:underline"
                   style={{ color: theme.color }}
                 >

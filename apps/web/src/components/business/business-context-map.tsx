@@ -5,6 +5,7 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useRef, useState } from "react";
 
 import { getScoreTheme } from "@/lib/score-theme";
+import { getSubsectorLabel } from "@/lib/subsector-label";
 
 type NearbyBusiness = {
   id: string;
@@ -122,7 +123,7 @@ export function BusinessContextMap({ items }: BusinessContextMapProps) {
         iconAnchor: [Math.round(size / 2), Math.round(size / 2)],
       });
 
-      const sectorLabel = item.subcategory ?? item.category;
+      const sectorLabel = getSubsectorLabel(item.subcategory ?? item.category);
       const badge = item.isSelected ? "<span style='margin-left:6px;font-size:10px;color:#111827;font-weight:800;'>Seleccionado</span>" : "";
       L.marker([item.lat, item.lon], { icon: marker })
         .bindPopup(

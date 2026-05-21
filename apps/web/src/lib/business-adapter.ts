@@ -9,6 +9,13 @@ type BackendShop = {
   gap?: number;
   reviews?: number;
   hasComments?: boolean;
+  has_website?: boolean;
+  website?: string;
+  contact_website?: string;
+  brand_website?: string;
+  osm?: {
+    tags?: Record<string, unknown>;
+  };
   location?: {
     coordinates?: [number, number];
   };
@@ -22,6 +29,18 @@ export function toBusiness(item: BackendShop): Business {
   const lon = coordinates[0] ?? 0;
   const lat = coordinates[1] ?? 0;
 
+  const tags = item.osm?.tags ?? {};
+  const hasWebsite =
+    item.has_website ??
+    Boolean(
+      item.website ||
+        item.contact_website ||
+        item.brand_website ||
+        tags.website ||
+        tags["contact:website"] ||
+        tags["brand:website"],
+    );
+
   return {
     id: item._id,
     name: item.name ?? "Negocio sin nombre",
@@ -34,5 +53,6 @@ export function toBusiness(item: BackendShop): Business {
     gap: item.gap ?? 100,
     reviews: item.reviews ?? 0,
     hasComments: item.hasComments ?? false,
+    hasWebsite,
   };
 }

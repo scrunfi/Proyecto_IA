@@ -15,6 +15,9 @@ db = client[MONGO_DB_NAME]
 shops_collection = db["shops"]
 shop_reviews_collection = db["shop_reviews"]
 ingesta_runs_collection = db["ingesta_runs"]
+ai_analysis_collection = db["ai_analysis"]
+precompute_jobs_collection = db["precompute_jobs"]
+web_requests_collection = db["web_requests"]
 
 
 async def ensure_indexes() -> None:
@@ -34,3 +37,19 @@ async def ensure_indexes() -> None:
     # REVIEWS DE GOOGLE
     await shop_reviews_collection.create_index("shop_id", unique=True)
     await shop_reviews_collection.create_index("google_place_id")
+
+    # ANALISIS IA CACHEADOS
+    await ai_analysis_collection.create_index("shop_id", unique=True)
+    await ai_analysis_collection.create_index("osm_id")
+    await ai_analysis_collection.create_index("updated_at")
+
+    # JOBS DE PRECOMPUTE IA
+    await precompute_jobs_collection.create_index("job_id", unique=True)
+    await precompute_jobs_collection.create_index("status")
+    await precompute_jobs_collection.create_index("updated_at")
+
+    # SOLICITUDES DE WEB EXTERNA (n8n)
+    await web_requests_collection.create_index("request_id", unique=True)
+    await web_requests_collection.create_index("shop_id")
+    await web_requests_collection.create_index("status")
+    await web_requests_collection.create_index("created_at")

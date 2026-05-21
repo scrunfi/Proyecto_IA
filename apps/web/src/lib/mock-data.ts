@@ -10,6 +10,7 @@ export type Business = {
   gap: number;
   reviews: number;
   hasComments?: boolean;
+  hasWebsite?: boolean;
 };
 
 export const neighborhoods = [

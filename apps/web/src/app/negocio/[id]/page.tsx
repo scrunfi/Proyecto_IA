@@ -3,9 +3,12 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { BusinessContextMap } from "@/components/business/business-context-map";
+import { AiAnalysisButton } from "@/components/business/ai-analysis-button";
+import { WebRequestButton } from "@/components/business/web-request-button";
 import { backendFetch } from "@/lib/backend-client";
 import { toBusiness } from "@/lib/business-adapter";
 import { getScoreTheme } from "@/lib/score-theme";
+import { getSubsectorLabel } from "@/lib/subsector-label";
 
 type BusinessDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -19,8 +22,42 @@ type ScoreBreakdownItem = {
   detail: string;
 };
 
+type BusinessDetailResponse = {
+  business: {
+    _id: string;
+    name?: string;
+    category?: string;
+    subcategory?: string;
+    score?: number;
+    gap?: number;
+    reviews?: number;
+    has_website?: boolean;
+    location?: { coordinates?: [number, number] };
+    barrio?: { name?: string };
+  };
+  benchmark: {
+    percentile: number;
+    neighborhoodAvg: number;
+    topQuartile: number;
+  };
+  recommendations: string[];
+  score_breakdown?: Array<{
+    label: string;
+    points: number;
+    max_points: number;
+    detail: string;
+  }>;
+  comments?: Array<{
+    text: string;
+    rating?: number;
+    author?: string;
+    relative_time?: string;
+  }>;
+};
+
 export default async function BusinessDetailPage({ params, searchParams }: BusinessDetailPageProps) {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = decodeURIComponent(rawId);
   const query = await searchParams;
   const radiusParam = Number(query.radius ?? "3");
   const radiusKm = [1, 3, 5].includes(radiusParam) ? radiusParam : 3;
@@ -38,39 +75,11 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
     author?: string;
     relative_time?: string;
   }> = [];
+  let aiAnalysisReport: string | null = null;
+  let hasExistingAiAnalysis = false;
 
   try {
-    const detail = await backendFetch<{
-      business: {
-        _id: string;
-        name?: string;
-        category?: string;
-        subcategory?: string;
-        score?: number;
-        gap?: number;
-        reviews?: number;
-        location?: { coordinates?: [number, number] };
-        barrio?: { name?: string };
-      };
-      benchmark: {
-        percentile: number;
-        neighborhoodAvg: number;
-        topQuartile: number;
-      };
-      recommendations: string[];
-      score_breakdown?: Array<{
-        label: string;
-        points: number;
-        max_points: number;
-        detail: string;
-      }>;
-      comments?: Array<{
-        text: string;
-        rating?: number;
-        author?: string;
-        relative_time?: string;
-      }>;
-    }>(`/shops/id/${id}/detail`);
+    const detail = await fetchBusinessDetail(id);
     business = toBusiness(detail.business);
     benchmark = detail.benchmark;
     recommendations = detail.recommendations;
@@ -86,8 +95,27 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
   }
 
   const scoreTheme = getScoreTheme(business.score);
-  const sectorLabel = business.subcategory ?? business.category;
+  const sectorLabel = getSubsectorLabel(business.subcategory ?? business.category);
   const nearbyBusinesses = await fetchNearbyCompetitors(business, radiusKm);
+
+  try {
+    const aiAnalysis = await backendFetch<{
+      data?: unknown;
+      cached?: boolean;
+    }>(`/shops/id/${encodeURIComponent(id)}/ai-analysis`, {
+      method: "POST",
+    });
+
+    aiAnalysisReport = extractAiReportText(aiAnalysis.data) ?? extractAiReportText(aiAnalysis);
+    hasExistingAiAnalysis = aiAnalysis.cached === true || Boolean(aiAnalysisReport);
+    if (!aiAnalysisReport) {
+      aiAnalysisReport = "El webhook respondio sin contenido util para mostrar.";
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Error desconocido";
+    aiAnalysisReport = `No se pudo obtener el analisis IA. ${detail}`;
+  }
+
   const scoreBreakdown =
     scoreBreakdownFromApi.length > 0
       ? scoreBreakdownFromApi
@@ -97,9 +125,11 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
           percentile: benchmark.percentile,
           gap: business.gap,
         });
+  const recommendationItems = buildRecommendationImpact(recommendations, business.gap);
+  const aiAnalysisLines = formatAiReportLines(aiAnalysisReport);
 
   return (
-    <div className="flex h-screen w-full flex-1 flex-col gap-4 overflow-hidden px-4 py-4 sm:px-6 lg:px-8">
+    <div className="flex h-screen w-full flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
       <header className="rounded-3xl border border-line bg-surface px-6 py-6 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <p className="text-xs font-semibold tracking-[0.2em] text-accent uppercase">
@@ -135,6 +165,10 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
             }
           />
           <Pill label={`${business.reviews} resenas`} />
+          <Pill
+            label={business.hasWebsite ? "Web registrada" : "Sin web registrada"}
+            className={business.hasWebsite ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-800"}
+          />
         </div>
       </header>
 
@@ -167,7 +201,7 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
               {[1, 3, 5].map((value) => (
                 <Link
                   key={value}
-                  href={`/negocio/${business.id}?radius=${value}`}
+                  href={`/negocio/${encodeURIComponent(business.id)}?radius=${value}`}
                   className={`rounded-full px-2 py-1 ${
                     radiusKm === value ? "bg-accent text-white" : "text-zinc-700 hover:bg-zinc-100"
                   }`}
@@ -237,10 +271,17 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         <section className="min-h-0 rounded-3xl border border-line bg-surface p-5 shadow-sm xl:col-span-1">
           <h2 className="font-semibold">Top acciones recomendadas</h2>
           <ol className="mt-3 space-y-2 overflow-auto pr-1 text-sm text-zinc-700">
-            {recommendations.map((item, index) => (
-              <li key={item} className="rounded-xl border border-line bg-surface-2 px-3 py-2">
-                <span className="mr-2 font-semibold text-accent">{index + 1}.</span>
-                {item}
+            {recommendationItems.map((item, index) => (
+              <li key={item.action} className="rounded-xl border border-line bg-surface-2 px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="min-w-0 flex-1">
+                    <span className="mr-2 font-semibold text-accent">{index + 1}.</span>
+                    {item.action.replace(/\s*\(\+\d+\s*pts\)\s*$/i, "")}
+                  </p>
+                  <span className="inline-flex w-[84px] shrink-0 items-center justify-center rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent">
+                    +{item.points} pts
+                  </span>
+                </div>
               </li>
             ))}
           </ol>
@@ -265,10 +306,289 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
             </ul>
           )}
         </section>
+
+        <section className="min-h-0 rounded-3xl border border-line bg-surface p-5 shadow-sm xl:col-span-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-semibold">Analisis IA (n8n)</h2>
+            <AiAnalysisButton businessId={id} hasExistingAnalysis={hasExistingAiAnalysis} />
+          </div>
+          <div className="mt-3 rounded-2xl border border-line bg-surface-2 p-3 text-sm text-zinc-700">
+            {aiAnalysisLines.length === 0 ? (
+              <p>Sin respuesta del backend para analisis IA.</p>
+            ) : (
+              renderAiAnalysisLines(aiAnalysisLines)
+            )}
+          </div>
+          <div className="mt-3">
+            <WebRequestButton businessId={id} />
+          </div>
+        </section>
+
       </section>
 
     </div>
   );
+}
+
+async function fetchBusinessDetail(id: string): Promise<BusinessDetailResponse> {
+  try {
+    return await backendFetch<BusinessDetailResponse>(`/shops/id/${encodeURIComponent(id)}/detail`);
+  } catch {
+    const candidates = [
+      process.env.NEXT_PUBLIC_API_BASE_URL,
+      process.env.INTERNAL_API_BASE_URL,
+      "http://localhost:8000",
+      "http://api:8000",
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+    for (const baseUrl of candidates) {
+      const normalized = baseUrl.replace(/\/$/, "");
+      const response = await fetch(`${normalized}/shops/id/${encodeURIComponent(id)}/detail`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (response.ok) {
+        return (await response.json()) as BusinessDetailResponse;
+      }
+    }
+
+    throw new Error("Business detail not found");
+  }
+}
+
+function extractAiReportText(data: unknown): string | null {
+  if (typeof data === "string") {
+    const cleaned = sanitizeAiText(data);
+    if (!cleaned || cleaned.toLowerCase() === "workflow was started") return null;
+    return cleaned;
+  }
+  if (!data || typeof data !== "object") return null;
+
+  const raw = data as Record<string, unknown>;
+  const nestedData = raw.data;
+  if (nestedData && typeof nestedData === "object") {
+    const nestedText = extractAiReportText(nestedData);
+    if (nestedText) return nestedText;
+  }
+
+  const candidates = [
+    raw.result,
+    raw.output,
+    raw.response,
+    raw.text,
+    raw.message,
+    raw.analysis,
+    raw.summary,
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) {
+      return sanitizeAiText(value);
+    }
+  }
+
+  const deepText = findFirstReadableText(data);
+  if (deepText) return deepText;
+
+  return null;
+}
+
+function findFirstReadableText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const cleaned = sanitizeAiText(value);
+    if (!cleaned || cleaned.toLowerCase() === "workflow was started") return null;
+    return cleaned;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstReadableText(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (!value || typeof value !== "object") return null;
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const preferredKeys = ["analysis", "summary", "result", "output", "text", "message", "content"];
+
+  for (const key of preferredKeys) {
+    const direct = (value as Record<string, unknown>)[key];
+    const found = findFirstReadableText(direct);
+    if (found) return found;
+  }
+
+  for (const [, nested] of entries) {
+    const found = findFirstReadableText(nested);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function sanitizeAiText(value: string): string {
+  let text = value.trim();
+
+  if ((text.startsWith("\"") && text.endsWith("\"")) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+
+  text = text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  return text;
+}
+
+function formatAiReportLines(text: string | null): string[] {
+  if (!text) return [];
+
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function parseAiHeading(line: string): string | null {
+  const normalized = line.trim().toLowerCase();
+  const headingPrefixes = [
+    "resumen ejecutivo",
+    "top acciones recomendadas",
+    "detalle por apartados",
+    "problemas detectados",
+    "causas raiz probables",
+    "recomendaciones accionables",
+    "indicador sugerido",
+    "indicadores sugeridos para medir mejora",
+  ];
+
+  const compact = normalized.replace(/[:\-]+$/g, "");
+  if (!headingPrefixes.some((prefix) => compact.startsWith(prefix))) {
+    return null;
+  }
+
+  return line.replace(/[:\-]+$/g, "");
+}
+
+function parseAiListItem(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/);
+  if (bulletMatch?.[1]) {
+    return bulletMatch[1].trim();
+  }
+
+  const numberedMatch = trimmed.match(/^\d+[.)]\s+(.*)$/);
+  if (numberedMatch?.[1]) {
+    return numberedMatch[1].trim();
+  }
+
+  return null;
+}
+
+function parseAiDetailItem(line: string): { title: string; description: string } | null {
+  const trimmed = line.trim();
+  const match = trimmed.match(/^[-*•]\s+(.+?):\s+(.*)$/);
+  if (!match) return null;
+
+  return {
+    title: match[1].trim(),
+    description: match[2].trim(),
+  };
+}
+
+function renderAiAnalysisLines(lines: string[]): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let inDetailSection = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const heading = parseAiHeading(line);
+
+    if (heading) {
+      inDetailSection = heading.toLowerCase().startsWith("detalle por apartados");
+      nodes.push(
+        <p key={`${line.slice(0, 24)}-${index}`} className={index === 0 ? "font-semibold text-zinc-900" : "mt-3 font-semibold text-zinc-900"}>
+          {heading}
+        </p>,
+      );
+      continue;
+    }
+
+    if (inDetailSection) {
+      const detailItem = parseAiDetailItem(line);
+      if (detailItem) {
+        nodes.push(
+          <div key={`${line.slice(0, 24)}-${index}`} className="mt-2 rounded-xl border border-line bg-white/80 p-3">
+            <p className="font-semibold text-zinc-900">{detailItem.title}</p>
+            <p className="mt-1 text-zinc-700">{detailItem.description}</p>
+          </div>,
+        );
+        continue;
+      }
+    }
+
+    const listItem = parseAiListItem(line);
+    if (listItem) {
+      nodes.push(
+        <p key={`${line.slice(0, 24)}-${index}`} className={index === 0 ? "pl-4" : "mt-1 pl-4"}>
+          <span className="mr-2 text-zinc-500">-</span>
+          {listItem}
+        </p>,
+      );
+      continue;
+    }
+
+    nodes.push(
+      <p key={`${line.slice(0, 24)}-${index}`} className={index === 0 ? "" : "mt-2"}>
+        {line}
+      </p>,
+    );
+  }
+
+  return nodes;
+}
+
+function buildRecommendationImpact(recommendations: string[], gap: number): Array<{ action: string; points: number }> {
+  if (recommendations.length === 0) {
+    return [];
+  }
+
+  const maxRecoverablePoints = Math.max(6, Math.min(30, gap > 0 ? gap : 12));
+  const totalWeight = (recommendations.length * (recommendations.length + 1)) / 2;
+
+  const weighted = recommendations.map((action, index) => {
+    const weight = recommendations.length - index;
+    const rawPoints = Math.max(1, Math.round((maxRecoverablePoints * weight) / totalWeight));
+    return { action, points: rawPoints };
+  });
+
+  let allocated = weighted.reduce((acc, item) => acc + item.points, 0);
+  let cursor = 0;
+  while (allocated < maxRecoverablePoints) {
+    weighted[cursor % weighted.length].points += 1;
+    allocated += 1;
+    cursor += 1;
+  }
+
+  while (allocated > maxRecoverablePoints) {
+    const target = weighted[cursor % weighted.length];
+    if (target.points > 1) {
+      target.points -= 1;
+      allocated -= 1;
+    }
+    cursor += 1;
+  }
+
+  return weighted;
 }
 
 async function fetchNearbyCompetitors(business: ReturnType<typeof toBusiness>, radiusKm: number) {

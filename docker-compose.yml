@@ -30,6 +30,8 @@ services:
     command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - ./.env
+    environment:
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/a2c9f55c-ca19-4d21-a64e-05faec7f4f72
     restart: unless-stopped
     depends_on:
       - mongo

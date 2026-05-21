@@ -8,8 +8,6 @@ type AdminShellProps = {
 
 const links = [
   { href: "/ingesta", label: "Ingesta" },
-  { href: "/etl", label: "ETL" },
-  { href: "/entrenamiento", label: "Entrenamiento" },
 ];
 
 export function AdminShell({ title, description, children }: AdminShellProps) {

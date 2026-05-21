@@ -1,0 +1,230 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analiza las siguientes reviews de clientes y genera un informe profesional con los aspectos a mejorar de la empresa.\nCOMENTARIOS:\n\"\"\"\"\"\"\n{{ JSON.stringify($json.reviews) }}\n\"\"\"\"\"\"\nESTOS SON LOS DATOS DEL NEGOCIO MENCIONADO:\n\"\"\"\"\"\"\n{{ $('DATOS ID').item.json.name }}\n{{ JSON.stringify($('DATOS ID').item.json.osm.tags) }}\nScore_digital: {{ $('DATOS ID').item.json.score }}\nSubcategoria negocio: {{ $('DATOS ID').item.json.subcategory }}\n\"\"\"\"\"\"\n\nInstrucciones del analisis:\n\nIdentifica los problemas mas mencionados o mas graves.\nResume los patrones negativos y su impacto en la experiencia del cliente.\nDetecta causas raiz (operativas, humanas, de comunicacion, procesos, etc.).\nPropon mejoras concretas, accionables y medibles.\nSi hay solo una review, extrapola riesgos potenciales.\nSi hay contradicciones, indicalas.\nManten un tono profesional y orientado a negocio.\nTambien ten en cuenta que madurez digital tiene, y que falta para ser un negocio activo digitalmente.\n\nFormato de salida obligatorio:\n\nResumen ejecutivo (max. 5 lineas)\nProblemas detectados (lista priorizada)\nCausas raiz probables\nRecomendaciones accionables\nIndicadores sugeridos para medir mejora (KPIs)\n\nObjetivo final: ofrecer un diagnostico claro que ayude a mejorar la calidad del servicio y la satisfaccion del cliente.",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1200,
+        -32
+      ],
+      "id": "8aa53645-cd0c-4cfc-a94b-6405fee2c2cb",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "qwen3:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        192
+      ],
+      "id": "2bdeffcc-57cb-41c3-b385-043ad8c069e3",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "oatSsLCu7HddpDeS",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "a2c9f55c-ca19-4d21-a64e-05faec7f4f72",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        208,
+        -128
+      ],
+      "id": "eb8f245d-f7d1-4fb3-b611-2dc358d02401",
+      "name": "Webhook",
+      "webhookId": "a2c9f55c-ca19-4d21-a64e-05faec7f4f72"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fc0ccf30-764e-46e4-a544-863a76411d89",
+              "name": "osm",
+              "value": "={{ $json.body }}",
+              "type": "object"
+            },
+            {
+              "id": "42ad2a2e-f84e-413e-9489-123aaaf71f1b",
+              "name": "shop_id",
+              "value": "={{ $json.body.shop_id || $json.body.shopId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "772b4a9a-f635-4f09-bb30-8063908dfb0a",
+              "name": "osm_id",
+              "value": "={{ $json.body.osm_id || $json.body.osmId || $json.body.id || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        -128
+      ],
+      "id": "3f481d3c-1b1c-4667-95c4-d57e072d3c0f",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "collection": "shop_reviews",
+        "options": {},
+        "query": "={\"shop_id\":\"{{$json._id}}\"}"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        832,
+        -32
+      ],
+      "id": "35503642-0b48-434e-b300-fb86bd8a496e",
+      "name": "Find documents1",
+      "credentials": {
+        "mongoDb": {
+          "id": "iGzc9hMO15rGGe0y",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "collection": "shops",
+        "options": {
+          "limit": 1
+        },
+        "query": "={\"_id\":\"{{$json.body.shop_id || $json.shop_id || ''}}\"}"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        608,
+        -128
+      ],
+      "id": "2279398a-37b6-4a34-9f80-07b92d0f4858",
+      "name": "DATOS ID",
+      "credentials": {
+        "mongoDb": {
+          "id": "iGzc9hMO15rGGe0y",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserItemList",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        176
+      ],
+      "id": "73b624e5-1c9f-4b07-b370-a135ab0ea68c",
+      "name": "Item List Output Parser"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "DATOS ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATOS ID": {
+      "main": [
+        [
+          {
+            "node": "Find documents1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find documents1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Item List Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "16dd879c-8393-4e63-a5c1-4b59f738ea96",
+  "meta": {
+    "instanceId": "826a24a1237f6ab900e584df8a7c622b1dc399c4add7799f1ece0acf74e3a610"
+  },
+  "id": "0jKo5TmjCt5R7x29",
+  "tags": []
+}
