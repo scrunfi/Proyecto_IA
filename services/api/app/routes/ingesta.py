@@ -1,18 +1,608 @@
-from urllib import response
+import os
+import asyncio
+import logging
+from uuid import uuid4
+from urllib.parse import urlparse, urlunparse
+import json
 
 from fastapi import APIRouter, HTTPException, Query
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from hashlib import sha256
+import httpx
 
-from app.database.mongo import ingesta_runs_collection, shops_collection
+from app.database.mongo import (
+    ai_analysis_collection,
+    ingesta_runs_collection,
+    precompute_jobs_collection,
+    shop_reviews_collection,
+    shops_collection,
+    web_requests_collection,
+)
 from app.services.barrios_service import infer_barrio_name, load_barrios_geojson
 from app.services.normalizer import normalize_element
 from app.services.overpass_service import fetch_overpass_shops
 
 from app.services.google_places_service import fetch_google_reviews
-from app.database.mongo import shops_collection, shop_reviews_collection
 
 router = APIRouter()
+PRECOMPUTE_CANCEL_FLAGS: dict[str, bool] = {}
+logger = logging.getLogger(__name__)
+PRECOMPUTE_PROGRESS_EVERY = max(1, int(os.getenv("PRECOMPUTE_PROGRESS_EVERY", "50")))
+
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "").strip()
+N8N_WEBHOOK_WEB_URL = os.getenv("N8N_WEBHOOK_WEB_URL", "").strip()
+N8N_WEBHOOK_AUTH_HEADER = os.getenv("N8N_WEBHOOK_AUTH_HEADER", "").strip()
+N8N_WEBHOOK_AUTH_VALUE = os.getenv("N8N_WEBHOOK_AUTH_VALUE", "").strip()
+N8N_TIMEOUT_SECONDS = float(os.getenv("N8N_TIMEOUT_SECONDS", "420"))
+N8N_WEB_TIMEOUT_SECONDS = float(os.getenv("N8N_WEB_TIMEOUT_SECONDS", str(N8N_TIMEOUT_SECONDS)))
+
+
+def _to_utc_aware(value: datetime | None) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+async def _request_n8n_web_request(shop: dict):
+    webhook_url = N8N_WEBHOOK_WEB_URL or N8N_WEBHOOK_URL
+    if not webhook_url:
+        raise HTTPException(status_code=503, detail="N8N_WEBHOOK_WEB_URL no configurada")
+
+    tags = (shop.get("osm") or {}).get("tags")
+    business_id = str(shop.get("_id") or "").strip()
+    osm_id = ((shop.get("osm") or {}).get("id"))
+    resolved_id = osm_id if osm_id is not None else business_id
+    payload = {
+        # Campos duplicados para compatibilidad con distintos flujos de n8n.
+        "id": resolved_id,
+        "osm_id": osm_id,
+        "osmId": osm_id,
+        "shop_id": business_id,
+        "shopId": business_id,
+        "name": shop.get("name"),
+        "category": shop.get("category"),
+        "subcategory": shop.get("subcategory"),
+        "barrio": ((shop.get("barrio") or {}).get("name")),
+        "score": shop.get("score"),
+        "gap": shop.get("gap"),
+        "has_website": _has_website(shop),
+        "website": (tags or {}).get("website") if isinstance(tags, dict) else None,
+    }
+
+    timeout = httpx.Timeout(N8N_WEB_TIMEOUT_SECONDS, connect=10.0)
+    headers = {"Content-Type": "application/json"}
+    if N8N_WEBHOOK_AUTH_HEADER and N8N_WEBHOOK_AUTH_VALUE:
+        headers[N8N_WEBHOOK_AUTH_HEADER] = N8N_WEBHOOK_AUTH_VALUE
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.post(
+                webhook_url,
+                params={"id": resolved_id, "shop_id": business_id},
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text.strip()
+        if len(detail) > 400:
+            detail = f"{detail[:400]}..."
+        raise HTTPException(status_code=502, detail=f"n8n respondio {exc.response.status_code}: {detail}") from exc
+    except httpx.HTTPError as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar con n8n: {detail}") from exc
+
+    content_type = response.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            text = response.text.strip()
+            if text:
+                return {"result": text}
+            return {"result": ""}
+    return {"raw": response.text}
+
+
+async def _run_shop_web_request(request_id: str, shop_id: str, shop: dict):
+    try:
+        await web_requests_collection.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {
+                    "status": "processing",
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        webhook_response = await _request_n8n_web_request(shop)
+        await web_requests_collection.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {
+                    "status": "sent",
+                    "response": webhook_response,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+    except HTTPException as exc:
+        detail = str(exc.detail) if getattr(exc, "detail", None) else str(exc)
+        await web_requests_collection.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {
+                    "status": "error",
+                    "error": detail,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+    except Exception as exc:
+        detail = str(exc) or repr(exc)
+        await web_requests_collection.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {
+                    "status": "error",
+                    "error": detail,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+
+async def _request_n8n_analysis(business_id: str, osm_id: str | int | None):
+    if not N8N_WEBHOOK_URL:
+        raise HTTPException(status_code=503, detail="N8N_WEBHOOK_URL no configurada")
+
+    resolved_id = osm_id if osm_id is not None else business_id
+    payload = {
+        "id": resolved_id,
+        "osm_id": resolved_id,
+        "osmId": resolved_id,
+        "shop_id": business_id,
+        "shopId": business_id,
+    }
+    timeout = httpx.Timeout(N8N_TIMEOUT_SECONDS, connect=10.0)
+    headers = {"Content-Type": "application/json"}
+    if N8N_WEBHOOK_AUTH_HEADER and N8N_WEBHOOK_AUTH_VALUE:
+        headers[N8N_WEBHOOK_AUTH_HEADER] = N8N_WEBHOOK_AUTH_VALUE
+
+    parsed_url = urlparse(N8N_WEBHOOK_URL)
+    http_fallback_url = N8N_WEBHOOK_URL
+    if parsed_url.scheme == "https":
+        http_fallback_url = urlunparse(parsed_url._replace(scheme="http"))
+
+    candidate_urls: list[str] = []
+    if parsed_url.hostname == "n8n" and http_fallback_url != N8N_WEBHOOK_URL:
+        candidate_urls.append(http_fallback_url)
+        candidate_urls.append(N8N_WEBHOOK_URL)
+    else:
+        candidate_urls.append(N8N_WEBHOOK_URL)
+        if http_fallback_url != N8N_WEBHOOK_URL:
+            candidate_urls.append(http_fallback_url)
+
+    last_http_error: httpx.HTTPError | None = None
+    response = None
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            for webhook_url in candidate_urls:
+                try:
+                    response = await client.post(webhook_url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as exc:
+                    error_preview = exc.response.text.strip()
+                    if len(error_preview) > 500:
+                        error_preview = f"{error_preview[:500]}..."
+                    detail = f"n8n respondio {exc.response.status_code}"
+                    if error_preview:
+                        detail = f"{detail}: {error_preview}"
+                    raise HTTPException(status_code=502, detail=detail) from exc
+                except httpx.HTTPError as exc:
+                    last_http_error = exc
+
+            if response is None:
+                raise last_http_error or httpx.ConnectError("No se pudo conectar con n8n")
+    except httpx.HTTPError as exc:
+        detail_text = str(exc).strip() or repr(exc)
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar con n8n: {detail_text}") from exc
+
+    content_type = response.headers.get("content-type", "")
+    if "application/json" in content_type:
+        return response.json()
+
+    text = response.text.strip()
+    return {"result": text}
+
+
+async def _find_active_shop_by_id(shop_id: str):
+    shop = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.id": 1})
+    if shop:
+        return shop
+
+    numeric_osm_id = int(shop_id) if shop_id.isdigit() else None
+    osm_candidates: list[str | int] = [shop_id]
+    if numeric_osm_id is not None:
+        osm_candidates.append(numeric_osm_id)
+
+    return await shops_collection.find_one(
+        {"active": True, "osm.id": {"$in": osm_candidates}},
+        {"osm.id": 1},
+    )
+
+
+def _shop_tags(shop: dict) -> dict:
+    direct = shop.get("tags")
+    if isinstance(direct, dict):
+        return direct
+
+    osm_tags = ((shop.get("osm") or {}).get("tags"))
+    if isinstance(osm_tags, dict):
+        return osm_tags
+
+    return {}
+
+
+def _has_website(shop: dict) -> bool:
+    tags = _shop_tags(shop)
+    return any(tags.get(key) for key in ["website", "contact:website", "brand:website"])
+
+
+def _build_fallback_ai_payload(n8n_error: str):
+    fallback_recommendations = [
+        "Completa descripcion, categoria y datos de contacto de la ficha del negocio.",
+        "Publica novedades semanales y responde resenas para mejorar confianza local.",
+        "Revisa horario, web y redes para mantener consistencia en todos los canales.",
+    ]
+
+    return {
+        "source": "fallback",
+        "warning": "Analisis IA no disponible temporalmente; se devuelve respuesta de contingencia.",
+        "n8n_error": n8n_error,
+        "data": {
+            "analysis": {
+                "status": "degraded",
+                "summary": "No fue posible completar el flujo de IA en n8n.",
+                "recommendations": fallback_recommendations,
+            }
+        },
+    }
+
+
+async def _save_ai_analysis_cache(shop_id: str, osm_id: str | int | None, payload: dict) -> None:
+    now = datetime.now(timezone.utc)
+    await ai_analysis_collection.update_one(
+        {"shop_id": shop_id},
+        {
+            "$set": {
+                "shop_id": shop_id,
+                "osm_id": osm_id,
+                "payload": payload,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+
+
+async def _compute_ai_payload(shop_id: str, osm_id: str | int | None) -> dict:
+    reviews_doc = await shop_reviews_collection.find_one(
+        {"shop_id": shop_id},
+        {"_id": 0, "reviews": 1},
+    )
+    reviews = reviews_doc.get("reviews") if isinstance(reviews_doc, dict) else []
+    has_comments = isinstance(reviews, list) and any(
+        isinstance(item, dict) and str(item.get("text", "")).strip() for item in reviews
+    )
+
+    if not has_comments:
+        return await _build_actions_only_ai_payload(shop_id)
+
+    try:
+        n8n_data = await _request_n8n_analysis(shop_id, osm_id)
+        return {
+            "source": "n8n",
+            "data": n8n_data,
+        }
+    except HTTPException as exc:
+        return _build_fallback_ai_payload(str(exc.detail))
+
+
+async def _build_actions_only_ai_payload(shop_id: str) -> dict:
+    shop = await shops_collection.find_one({"_id": shop_id, "active": True})
+    if not shop:
+        return _build_fallback_ai_payload("Negocio no encontrado para informe sin comentarios")
+
+    score = int(shop.get("score", 0) or 0)
+    gap = int(shop.get("gap", 0) or 0)
+    category = shop.get("category") or "Negocio"
+    subcategory = shop.get("subcategory") or category
+    barrio_name = ((shop.get("barrio") or {}).get("name")) or "Sin barrio"
+    tags = ((shop.get("osm") or {}).get("tags")) or {}
+
+    has_website = any(tags.get(key) for key in ["website", "contact:website", "brand:website"])
+    has_phone = any(tags.get(key) for key in ["phone", "contact:phone", "brand:phone"])
+    has_email = any(tags.get(key) for key in ["email", "contact:email", "brand:email"])
+    has_social = any(
+        tags.get(key)
+        for key in [
+            "contact:facebook",
+            "facebook",
+            "contact:instagram",
+            "instagram",
+            "contact:linkedin",
+            "linkedin",
+            "contact:twitter",
+            "twitter",
+            "contact:tiktok",
+            "tiktok",
+        ]
+    )
+    has_opening_hours = bool(tags.get("opening_hours"))
+    has_delivery = tags.get("delivery") == "yes" or tags.get("takeaway") == "yes"
+    has_payment = any(
+        tags.get(key) == "yes"
+        for key in [
+            "payment:cards",
+            "cards",
+            "payment:credit_cards",
+            "credit_cards",
+            "payment:debit_cards",
+            "debit_cards",
+            "payment:contactless",
+            "contactless",
+        ]
+    )
+    has_accessibility = tags.get("wheelchair") in {"yes", "limited"}
+    has_brand = bool(tags.get("brand") or tags.get("operator"))
+    has_address = bool(tags.get("addr:street") and (tags.get("addr:housenumber") or tags.get("addr:postcode")))
+
+    recommendations: list[str] = []
+    if score < 40:
+        recommendations.append("Completa ficha digital basica: web, telefono y horario.")
+    if score < 60:
+        recommendations.append("Mejora consistencia en perfiles y activa publicaciones semanales.")
+    if not _has_website(shop):
+        recommendations.append("Activa una web basica y enlazala en todos los perfiles.")
+    if gap > 0:
+        recommendations.append("Prioriza acciones de alto impacto para cerrar el gap digital.")
+
+    breakdown = _score_breakdown_from_tags(tags)
+    weakest = sorted(breakdown, key=lambda item: float(item.get("ratio", 1)))[:3]
+    for item in weakest:
+        label = str(item.get("label", "Area"))
+        detail = str(item.get("detail", "Mejora este bloque para ganar competitividad."))
+        recommendations.append(f"{label}: {detail}")
+
+    seen: set[str] = set()
+    unique_recommendations: list[str] = []
+    for rec in recommendations:
+        normalized = rec.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_recommendations.append(rec.strip())
+
+    top_actions = unique_recommendations[:5]
+    if not top_actions:
+        top_actions = ["Mantiene posicion competitiva; optimiza conversion y fidelizacion local."]
+
+    score_map = {item.get("label"): item for item in breakdown}
+
+    def _score_text(label: str) -> str:
+        data = score_map.get(label) or {}
+        return f"{int(data.get('points', 0))}/{int(data.get('max_points', 0))}"
+
+    presencia_missing: list[str] = []
+    if not has_website:
+        presencia_missing.append("web")
+    if not has_phone:
+        presencia_missing.append("telefono")
+    if not has_email:
+        presencia_missing.append("email")
+    if not has_social:
+        presencia_missing.append("redes")
+
+    operacion_missing: list[str] = []
+    if not has_opening_hours:
+        operacion_missing.append("horario")
+    if not has_delivery:
+        operacion_missing.append("entrega/takeaway")
+    if not has_payment:
+        operacion_missing.append("metodos de pago")
+    if not has_accessibility:
+        operacion_missing.append("accesibilidad")
+
+    confianza_missing: list[str] = []
+    if not has_brand:
+        confianza_missing.append("marca u operador")
+    if not has_address:
+        confianza_missing.append("direccion estructurada")
+
+    apartados_lines = [
+        "Detalle por apartados:",
+        (
+            f"- Presencia digital ({_score_text('Presencia digital')} pts): "
+            + (
+                f"faltan {', '.join(presencia_missing)}. "
+                if presencia_missing
+                else "base completa. "
+            )
+            + "Prioriza alta de web y telefono en ficha principal, y replica en todos los perfiles."
+        ),
+        (
+            f"- Operacion y servicio ({_score_text('Operacion y servicio')} pts): "
+            + (
+                f"faltan {', '.join(operacion_missing)}. "
+                if operacion_missing
+                else "bloque operativo completo. "
+            )
+            + "Define horario semanal, activa entrega si aplica y publica metodos de pago visibles."
+        ),
+        (
+            f"- Identidad y confianza ({_score_text('Identidad y confianza')} pts): "
+            + (
+                f"faltan {', '.join(confianza_missing)}. "
+                if confianza_missing
+                else "identidad y direccion completas. "
+            )
+            + "Estandariza nombre comercial y completa calle + numero + codigo postal."
+        ),
+        (
+            f"- Completitud de ficha ({_score_text('Completitud de ficha')} pts): "
+            f"hay {len(tags)} metadatos OSM. "
+            "Agrega atributos utiles (categoria fina, servicios, enlaces, horarios especiales) para subir cobertura."
+        ),
+    ]
+
+    action_lines = "\n".join(f"- {action}" for action in top_actions)
+    apartados_text = "\n".join(apartados_lines)
+    report = (
+        "Resumen ejecutivo:\n"
+        f"No hay comentarios de clientes disponibles para {subcategory} en {barrio_name}. "
+        f"Se genera el informe con enfoque en acciones prioritarias a partir del score digital actual ({score}/100).\n\n"
+        "Top acciones recomendadas:\n"
+        f"{action_lines}\n\n"
+        f"{apartados_text}\n\n"
+        "Indicador sugerido:\n"
+        f"Reducir el gap digital de {gap} puntos durante las proximas 6-8 semanas con seguimiento semanal."
+    )
+
+    return {
+        "source": "local_actions",
+        "data": {
+            "analysis": report,
+            "recommendations": top_actions,
+            "mode": "no_comments_actions_report",
+        },
+    }
+
+
+async def _run_precompute_job(job_id: str, batch_size: int, only_missing: bool, force_refresh: bool):
+    started_at = datetime.now(timezone.utc)
+    logger.info(
+        "precompute_job[%s] started batch_size=%s only_missing=%s force_refresh=%s",
+        job_id,
+        batch_size,
+        only_missing,
+        force_refresh,
+    )
+    processed = 0
+    from_n8n = 0
+    from_fallback = 0
+    errors = 0
+    round_skip = 0
+
+    while True:
+        if PRECOMPUTE_CANCEL_FLAGS.get(job_id):
+            break
+
+        filters: dict = {"active": True}
+
+        if only_missing and not force_refresh:
+            cached_rows = await ai_analysis_collection.find({}, {"shop_id": 1, "_id": 0}).to_list(length=None)
+            cached_shop_ids = [row.get("shop_id") for row in cached_rows if row.get("shop_id")]
+            if cached_shop_ids:
+                current_id_filter = filters.get("_id")
+                if isinstance(current_id_filter, dict):
+                    current_id_filter["$nin"] = cached_shop_ids
+                else:
+                    filters["_id"] = {"$nin": cached_shop_ids}
+
+        total_candidates = await shops_collection.count_documents(filters)
+        current_skip = 0 if (only_missing and not force_refresh) else round_skip
+        cursor = (
+            shops_collection.find(filters, {"_id": 1, "osm.id": 1})
+            .sort("_id", 1)
+            .skip(current_skip)
+            .limit(batch_size)
+        )
+
+        round_processed = 0
+        async for row in cursor:
+            if PRECOMPUTE_CANCEL_FLAGS.get(job_id):
+                break
+
+            shop_id = row.get("_id")
+            if not shop_id:
+                continue
+
+            osm_id = ((row.get("osm") or {}).get("id"))
+            try:
+                payload = await _compute_ai_payload(shop_id, osm_id)
+                await _save_ai_analysis_cache(shop_id, osm_id, payload)
+                processed += 1
+                round_processed += 1
+                if payload.get("source") == "n8n":
+                    from_n8n += 1
+                else:
+                    from_fallback += 1
+                if processed % PRECOMPUTE_PROGRESS_EVERY == 0:
+                    logger.info(
+                        "precompute_job[%s] progress processed=%s n8n=%s fallback=%s errors=%s total_candidates=%s",
+                        job_id,
+                        processed,
+                        from_n8n,
+                        from_fallback,
+                        errors,
+                        total_candidates,
+                    )
+            except Exception:
+                errors += 1
+
+            await precompute_jobs_collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": "running",
+                        "processed": processed,
+                        "total_candidates": max(total_candidates, processed),
+                        "source_breakdown": {"n8n": from_n8n, "fallback": from_fallback},
+                        "errors": errors,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+
+        if round_processed == 0:
+            break
+
+        if not (only_missing and not force_refresh):
+            round_skip += batch_size
+
+    final_status = "cancelled" if PRECOMPUTE_CANCEL_FLAGS.get(job_id) else "completed"
+    elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+    logger.info(
+        "precompute_job[%s] finished status=%s processed=%s n8n=%s fallback=%s errors=%s elapsed_seconds=%.2f",
+        job_id,
+        final_status,
+        processed,
+        from_n8n,
+        from_fallback,
+        errors,
+        elapsed_seconds,
+    )
+    await precompute_jobs_collection.update_one(
+        {"job_id": job_id},
+        {
+            "$set": {
+                "status": final_status,
+                "processed": processed,
+                "source_breakdown": {"n8n": from_n8n, "fallback": from_fallback},
+                "errors": errors,
+                "updated_at": datetime.now(timezone.utc),
+                "finished_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    PRECOMPUTE_CANCEL_FLAGS.pop(job_id, None)
 
 
 def _score_breakdown_from_tags(tags: dict) -> list[dict]:
@@ -303,18 +893,20 @@ async def list_shops(
             }
         }
 
-    projection = {
-        "osm.tags": 0,
-    }
-
     cursor = (
-        shops_collection.find(filters, projection)
+        shops_collection.find(filters)
         .sort("score", 1)
         .skip(skip)
         .limit(limit)
     )
     shops = await cursor.to_list(length=limit)
     total = await shops_collection.count_documents(filters)
+
+    for shop in shops:
+        shop["has_website"] = _has_website(shop)
+        osm = shop.get("osm")
+        if isinstance(osm, dict):
+            osm.pop("tags", None)
 
     return {
         "total": total,
@@ -521,15 +1113,19 @@ async def test_google():
 
 @router.get("/shops/id/{shop_id}")
 async def get_shop_by_id(shop_id: str):
-    shop = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.tags": 0})
+    shop = await shops_collection.find_one({"_id": shop_id, "active": True})
     if not shop:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    shop["has_website"] = _has_website(shop)
+    osm = shop.get("osm")
+    if isinstance(osm, dict):
+        osm.pop("tags", None)
     return shop
 
 
 @router.get("/shops/id/{shop_id}/detail")
 async def get_shop_detail(shop_id: str):
-    shop = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.tags": 0})
+    shop = await shops_collection.find_one({"_id": shop_id, "active": True})
     if not shop:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
 
@@ -557,8 +1153,7 @@ async def get_shop_detail(shop_id: str):
 
     shop["reviews"] = reviews_total
 
-    full_shop_doc = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.tags": 1})
-    tags = ((full_shop_doc or {}).get("osm") or {}).get("tags") or {}
+    tags = ((shop.get("osm") or {}).get("tags")) or {}
 
     score = int(shop.get("score", 0))
     category = shop.get("category")
@@ -595,6 +1190,11 @@ async def get_shop_detail(shop_id: str):
         recommendations.append("Completa ficha digital basica: web, telefono y horario.")
     if score < 60:
         recommendations.append("Mejora consistencia en perfiles y activa publicaciones semanales.")
+
+    shop["has_website"] = _has_website(shop)
+    osm = shop.get("osm")
+    if isinstance(osm, dict):
+        osm.pop("tags", None)
     if neighborhood_avg > score:
         recommendations.append("Prioriza acciones para cerrar la brecha frente a tu barrio.")
     if top_quartile > score:
@@ -617,6 +1217,320 @@ async def get_shop_detail(shop_id: str):
         "comments": comments,
         "score_breakdown": score_breakdown,
     }
+
+
+@router.post("/shops/id/{shop_id}/ai-analysis")
+async def analyze_shop_with_n8n(shop_id: str, force_refresh: bool = Query(default=False)):
+    shop = await _find_active_shop_by_id(shop_id)
+    if not shop:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+
+    osm_id = ((shop.get("osm") or {}).get("id"))
+    if not force_refresh:
+        cached = await ai_analysis_collection.find_one({"shop_id": shop_id}, {"_id": 0})
+        if cached and cached.get("payload"):
+            payload = cached["payload"]
+            return {
+                "shop_id": shop_id,
+                "osm_id": osm_id,
+                "cached": True,
+                "cached_at": cached.get("updated_at"),
+                **payload,
+            }
+
+    payload = await _compute_ai_payload(shop_id, osm_id)
+    await _save_ai_analysis_cache(shop_id, osm_id, payload)
+
+    return {
+        "shop_id": shop_id,
+        "osm_id": osm_id,
+        "cached": False,
+        **payload,
+    }
+
+
+@router.post("/shops/id/{shop_id}/web-request")
+async def create_shop_web_request(shop_id: str):
+    shop = await _find_active_shop_by_id(shop_id)
+    if not shop:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+
+    request_id = str(uuid4())
+    now = datetime.now(timezone.utc)
+    await web_requests_collection.insert_one(
+        {
+            "request_id": request_id,
+            "shop_id": shop_id,
+            "status": "queued",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    asyncio.create_task(_run_shop_web_request(request_id, shop_id, shop))
+    return {
+        "status": "queued",
+        "shop_id": shop_id,
+        "request_id": request_id,
+        "queued_at": now,
+    }
+
+
+@router.get("/shops/id/{shop_id}/web-request/latest")
+async def get_latest_shop_web_request(shop_id: str):
+    row = await web_requests_collection.find_one(
+        {"shop_id": shop_id},
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="No hay solicitudes de web para este negocio")
+    return row
+
+
+@router.post("/shops/id/{shop_id}/ai-analysis/precompute")
+async def precompute_shop_ai_analysis(shop_id: str):
+    shop = await _find_active_shop_by_id(shop_id)
+    if not shop:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+
+    osm_id = ((shop.get("osm") or {}).get("id"))
+    payload = await _compute_ai_payload(shop_id, osm_id)
+    await _save_ai_analysis_cache(shop_id, osm_id, payload)
+
+    return {
+        "status": "ok",
+        "shop_id": shop_id,
+        "osm_id": osm_id,
+        "source": payload.get("source"),
+    }
+
+
+@router.post("/shops/ai-analysis/precompute-all")
+async def precompute_all_ai_analysis(
+    limit: int = Query(default=0, ge=0, le=200000),
+    skip: int = Query(default=0, ge=0),
+    only_missing: bool = Query(default=True),
+    force_refresh: bool = Query(default=False),
+):
+    started_at = datetime.now(timezone.utc)
+    logger.info(
+        "precompute_all started limit=%s skip=%s only_missing=%s force_refresh=%s",
+        limit,
+        skip,
+        only_missing,
+        force_refresh,
+    )
+    filters: dict = {"active": True}
+
+    if only_missing and not force_refresh:
+        cached_rows = await ai_analysis_collection.find({}, {"shop_id": 1, "_id": 0}).to_list(length=None)
+        cached_shop_ids = [row.get("shop_id") for row in cached_rows if row.get("shop_id")]
+        if cached_shop_ids:
+            current_id_filter = filters.get("_id")
+            if isinstance(current_id_filter, dict):
+                current_id_filter["$nin"] = cached_shop_ids
+            else:
+                filters["_id"] = {"$nin": cached_shop_ids}
+
+    total_candidates = await shops_collection.count_documents(filters)
+
+    cursor = shops_collection.find(filters, {"_id": 1, "osm.id": 1}).sort("_id", 1).skip(skip)
+    if limit > 0:
+        cursor = cursor.limit(limit)
+
+    processed = 0
+    from_n8n = 0
+    from_fallback = 0
+    errors = 0
+    error_items: list[dict] = []
+
+    async for row in cursor:
+        shop_id = row.get("_id")
+        if not shop_id:
+            continue
+
+        osm_id = ((row.get("osm") or {}).get("id"))
+        try:
+            payload = await _compute_ai_payload(shop_id, osm_id)
+            await _save_ai_analysis_cache(shop_id, osm_id, payload)
+            processed += 1
+            if payload.get("source") == "n8n":
+                from_n8n += 1
+            else:
+                from_fallback += 1
+            if processed % PRECOMPUTE_PROGRESS_EVERY == 0:
+                logger.info(
+                    "precompute_all progress processed=%s n8n=%s fallback=%s errors=%s total_candidates=%s",
+                    processed,
+                    from_n8n,
+                    from_fallback,
+                    errors,
+                    total_candidates,
+                )
+        except Exception as exc:
+            errors += 1
+            if len(error_items) < 25:
+                error_items.append({"shop_id": shop_id, "error": str(exc)})
+
+    elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+    logger.info(
+        "precompute_all finished processed=%s n8n=%s fallback=%s errors=%s total_candidates=%s elapsed_seconds=%.2f",
+        processed,
+        from_n8n,
+        from_fallback,
+        errors,
+        total_candidates,
+        elapsed_seconds,
+    )
+
+    return {
+        "status": "ok",
+        "total_candidates": total_candidates,
+        "processed": processed,
+        "source_breakdown": {
+            "n8n": from_n8n,
+            "fallback": from_fallback,
+        },
+        "errors": errors,
+        "error_items": error_items,
+        "params": {
+            "limit": limit,
+            "skip": skip,
+            "only_missing": only_missing,
+            "force_refresh": force_refresh,
+        },
+    }
+
+
+@router.post("/shops/ai-analysis/precompute-job/start")
+async def start_precompute_job(
+    batch_size: int = Query(default=25, ge=1, le=500),
+    only_missing: bool = Query(default=True),
+    force_refresh: bool = Query(default=False),
+):
+    active_job = await precompute_jobs_collection.find_one(
+        {"status": "running"},
+        {"_id": 0, "job_id": 1, "updated_at": 1},
+        sort=[("created_at", -1)],
+    )
+    if active_job:
+        updated_at = _to_utc_aware(active_job.get("updated_at"))
+        stale = False
+        if updated_at is not None:
+            stale = datetime.now(timezone.utc) - updated_at > timedelta(minutes=12)
+        else:
+            stale = True
+
+        if not stale:
+            return {"status": "already_running", "job_id": active_job.get("job_id")}
+
+        stale_job_id = str(active_job.get("job_id") or "")
+        await precompute_jobs_collection.update_one(
+            {"job_id": stale_job_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "updated_at": datetime.now(timezone.utc),
+                    "finished_at": datetime.now(timezone.utc),
+                    "stale_closed": True,
+                }
+            },
+        )
+        PRECOMPUTE_CANCEL_FLAGS.pop(stale_job_id, None)
+
+    job_id = str(uuid4())
+    now = datetime.now(timezone.utc)
+    await precompute_jobs_collection.insert_one(
+        {
+            "job_id": job_id,
+            "status": "running",
+            "processed": 0,
+            "total_candidates": 0,
+            "source_breakdown": {"n8n": 0, "fallback": 0},
+            "errors": 0,
+            "params": {
+                "batch_size": batch_size,
+                "only_missing": only_missing,
+                "force_refresh": force_refresh,
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    PRECOMPUTE_CANCEL_FLAGS[job_id] = False
+    asyncio.create_task(_run_precompute_job(job_id, batch_size, only_missing, force_refresh))
+    return {"status": "started", "job_id": job_id}
+
+
+@router.get("/shops/ai-analysis/precompute-job/status")
+async def get_precompute_job_status(job_id: str | None = None):
+    query = {"job_id": job_id} if job_id else {}
+    sort = None if job_id else [("created_at", -1)]
+    job = await precompute_jobs_collection.find_one(query, {"_id": 0}, sort=sort)
+    if not job:
+        raise HTTPException(status_code=404, detail="No hay job de precompute")
+
+    if job.get("status") == "cancelling":
+        updated_at = _to_utc_aware(job.get("updated_at"))
+        stale = False
+        if updated_at is not None:
+            stale = datetime.now(timezone.utc) - updated_at > timedelta(seconds=45)
+        else:
+            stale = True
+
+        if stale:
+            await precompute_jobs_collection.update_one(
+                {"job_id": job.get("job_id")},
+                {
+                    "$set": {
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            PRECOMPUTE_CANCEL_FLAGS.pop(str(job.get("job_id") or ""), None)
+            job["status"] = "cancelled"
+            job["finished_at"] = datetime.now(timezone.utc)
+            job["updated_at"] = datetime.now(timezone.utc)
+
+    return job
+
+
+@router.post("/shops/ai-analysis/precompute-job/cancel")
+async def cancel_precompute_job(job_id: str):
+    PRECOMPUTE_CANCEL_FLAGS[job_id] = True
+    result = await precompute_jobs_collection.update_one(
+        {"job_id": job_id},
+        {
+            "$set": {
+                "status": "cancelling",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="job_id no encontrado")
+
+    current = await precompute_jobs_collection.find_one({"job_id": job_id}, {"_id": 0, "status": 1})
+    if (current or {}).get("status") not in {"running", "cancelling"}:
+        await precompute_jobs_collection.update_one(
+            {"job_id": job_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "finished_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        PRECOMPUTE_CANCEL_FLAGS.pop(job_id, None)
+        return {"status": "cancelled", "job_id": job_id}
+
+    return {"status": "cancelling", "job_id": job_id}
 
 
 @router.get("/shops/quality")

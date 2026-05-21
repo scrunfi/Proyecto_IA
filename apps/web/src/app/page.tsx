@@ -1,5 +1,5 @@
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
-import Link from "next/link";
+import { PrecomputeAllButton } from "@/components/admin/precompute-all-button";
 
 export default function Home() {
   return (
@@ -22,27 +22,10 @@ export default function Home() {
       <section className="rounded-3xl border border-line bg-surface px-5 py-4 shadow-sm">
         <h2 className="font-semibold">Panel operativo</h2>
         <p className="mt-1 text-sm text-zinc-600">
-          Acceso abierto temporal para ingesta, ETL y entrenamiento.
+          Ejecuta procesos masivos para analisis IA de todos los negocios.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link
-            href="/ingesta"
-            className="rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold hover:bg-zinc-100"
-          >
-            Ir a ingesta
-          </Link>
-          <Link
-            href="/etl"
-            className="rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold hover:bg-zinc-100"
-          >
-            Ir a ETL
-          </Link>
-          <Link
-            href="/entrenamiento"
-            className="rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold hover:bg-zinc-100"
-          >
-            Ir a entrenamiento
-          </Link>
+          <PrecomputeAllButton />
         </div>
       </section>
     </div>

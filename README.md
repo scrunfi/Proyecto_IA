@@ -94,6 +94,12 @@ El frontend consume el backend mediante HTTP (REST).
   - Devuelve ficha base de un negocio.
 - `GET /shops/id/{shop_id}/detail`
   - Devuelve detalle con benchmark y recomendaciones.
+- `POST /shops/id/{shop_id}/ai-analysis`
+  - Envia el `osm.id` del negocio al webhook de n8n y devuelve la respuesta del flujo.
+- `POST /shops/id/{shop_id}/web-request`
+  - Envia a n8n una solicitud para crear web del negocio y guarda estado (`queued`/`sent`/`error`).
+- `GET /shops/id/{shop_id}/web-request/latest`
+  - Devuelve la ultima solicitud de web registrada para ese negocio.
 - `GET /shops/quality`
   - Reporte agregado de calidad y asignacion de barrio.
 - `GET /shops/quality/issues`
@@ -190,6 +196,12 @@ OVERPASS_API_URL=https://overpass-api.de/api/interpreter
 OVERPASS_TIMEOUT_SECONDS=60
 OVERPASS_USER_AGENT=ProyectoAlmeria/1.0
 BARRIOS_GEOJSON_PATH=app/data/barrios.geojson
+N8N_WEBHOOK_URL=https://tu-n8n/webhook/a2c9f55c-ca19-4d21-a64e-05faec7f4f72
+# Opcional: webhook dedicado para solicitudes de web
+N8N_WEBHOOK_WEB_URL=
+# Opcional (si proteges el webhook con header)
+N8N_WEBHOOK_AUTH_HEADER=Authorization
+N8N_WEBHOOK_AUTH_VALUE=Bearer <tu_token>
 ```
 
 Nota: puedes copiar `services/api/.env.example` a `services/api/.env` y completar credenciales.
@@ -246,6 +258,6 @@ git rm --cached services/api/.env
 - [x] Reportes de calidad y utilidades de reparacion de barrio.
 - [ ] Validacion y monitoreo continuo de calidad de datos.
 - [ ] Logging y observabilidad.
-- [ ] Migracion a PostgreSQL cuando aplique.
+
 
 

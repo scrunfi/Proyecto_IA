@@ -21,5 +21,11 @@ export async function backendFetch<T>(path: string, init?: RequestInit): Promise
     throw new Error(text || `Error ${response.status}`);
   }
 
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    const text = await response.text();
+    throw new Error(`Respuesta no JSON del backend: ${text.slice(0, 280)}`);
+  }
+
   return (await response.json()) as T;
 }

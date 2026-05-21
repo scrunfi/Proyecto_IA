@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -10,6 +10,7 @@ import { MapView } from "@/components/map/map-view";
 import { getBusinesses } from "@/lib/api-client";
 import type { Business } from "@/lib/mock-data";
 import { getScoreTheme } from "@/lib/score-theme";
+import { getSubsectorLabel } from "@/lib/subsector-label";
 
 const CATEGORY_GROUPS: Array<{ label: string; patterns: RegExp[] }> = [
   {
@@ -144,6 +145,7 @@ function getCategoryGroup(value: string) {
 export function DashboardShell() {
   const MAX_MAP_MARKERS = 300;
   const MAX_OPPORTUNITIES = 120;
+  const MIN_SUBCATEGORY_COUNT = 4;
 
   const router = useRouter();
   const pathname = usePathname();
@@ -180,11 +182,15 @@ export function DashboardShell() {
       : CATEGORY_LABELS.has(selectedCategory)
         ? selectedCategory
         : getCategoryGroup(selectedCategory);
+  const selectedSubcategory = searchParams.get("subgrupo") ?? searchParams.get("subcategory") ?? "all";
   const rawScore = Number(searchParams.get("score_min") ?? "0");
   const minScore = Number.isNaN(rawScore) ? 0 : Math.max(0, Math.min(100, rawScore));
   const commentsParam = searchParams.get("comments");
   const commentsFilter: "all" | "with" | "without" =
     commentsParam === "with" || commentsParam === "without" ? commentsParam : "all";
+  const websiteParam = searchParams.get("website");
+  const websiteFilter: "all" | "with" | "without" =
+    websiteParam === "with" || websiteParam === "without" ? websiteParam : "all";
 
   const groupedBusinesses = useMemo(() => {
     return businesses.map((item) => ({
@@ -220,77 +226,152 @@ export function DashboardShell() {
       ? groupedSelectedCategory
       : "all";
 
+  const subcategoryOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    const source = groupedBusinesses.filter((item) => {
+      const neighborhoodMatch =
+        effectiveSelectedNeighborhood === "all" || item.neighborhood === effectiveSelectedNeighborhood;
+      const categoryMatch =
+        effectiveSelectedCategory === "all" || item.groupedCategory === effectiveSelectedCategory;
+      return neighborhoodMatch && categoryMatch;
+    });
+
+    source.forEach((item) => {
+      const label = item.subcategory ?? item.category;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([value, count]) => ({
+        value,
+        count,
+        disabled: count < MIN_SUBCATEGORY_COUNT,
+      }));
+  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, MIN_SUBCATEGORY_COUNT]);
+
+  const selectableSubcategories = useMemo(
+    () => subcategoryOptions.filter((item) => !item.disabled).map((item) => item.value),
+    [subcategoryOptions],
+  );
+
+  const effectiveSelectedSubcategory =
+    selectedSubcategory === "all" || selectableSubcategories.includes(selectedSubcategory)
+      ? selectedSubcategory
+      : "all";
+
   const filteredBusinesses = useMemo(() => {
     return groupedBusinesses.filter((item) => {
       const neighborhoodMatch =
         effectiveSelectedNeighborhood === "all" || item.neighborhood === effectiveSelectedNeighborhood;
       const categoryMatch =
         effectiveSelectedCategory === "all" || item.groupedCategory === effectiveSelectedCategory;
+      const subcategoryLabel = item.subcategory ?? item.category;
+      const subcategoryMatch =
+        effectiveSelectedSubcategory === "all" || subcategoryLabel === effectiveSelectedSubcategory;
       const scoreMatch = item.score >= minScore;
       const commentsMatch =
         commentsFilter === "all" ||
         (commentsFilter === "with" && item.hasComments) ||
         (commentsFilter === "without" && !item.hasComments);
+      const websiteMatch =
+        websiteFilter === "all" ||
+        (websiteFilter === "with" && item.hasWebsite) ||
+        (websiteFilter === "without" && !item.hasWebsite);
 
-      return neighborhoodMatch && categoryMatch && scoreMatch && commentsMatch;
+      return neighborhoodMatch && categoryMatch && subcategoryMatch && scoreMatch && commentsMatch && websiteMatch;
     });
-  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, minScore, commentsFilter]);
+  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, effectiveSelectedSubcategory, minScore, commentsFilter, websiteFilter]);
 
   const activeFilterCount =
     Number(effectiveSelectedNeighborhood !== "all") +
     Number(effectiveSelectedCategory !== "all") +
+    Number(effectiveSelectedSubcategory !== "all") +
     Number(minScore > 0) +
-    Number(commentsFilter !== "all");
+    Number(commentsFilter !== "all") +
+    Number(websiteFilter !== "all");
 
-  function updateUrlFilters(next: {
-    neighborhood?: string;
-    category?: string;
-    score?: number;
-    comments?: "all" | "with" | "without";
-  }) {
-    const neighborhood = next.neighborhood ?? effectiveSelectedNeighborhood;
-    const category = next.category ?? effectiveSelectedCategory;
-    const score = next.score ?? minScore;
-    const comments = next.comments ?? commentsFilter;
+  const updateUrlFilters = useCallback(
+    (next: {
+      neighborhood?: string;
+      category?: string;
+      subcategory?: string;
+      score?: number;
+      comments?: "all" | "with" | "without";
+      website?: "all" | "with" | "without";
+    }) => {
+      const neighborhood = next.neighborhood ?? effectiveSelectedNeighborhood;
+      const category = next.category ?? effectiveSelectedCategory;
+      const subcategory = next.subcategory ?? effectiveSelectedSubcategory;
+      const score = next.score ?? minScore;
+      const comments = next.comments ?? commentsFilter;
+      const website = next.website ?? websiteFilter;
 
-    const params = new URLSearchParams();
-    if (neighborhood !== "all") {
-      params.set("barrio", neighborhood);
-    }
-    if (category !== "all") {
-      params.set("sector", category);
-    }
-    if (score > 0) {
-      params.set("score_min", String(score));
-    }
-    if (comments !== "all") {
-      params.set("comments", comments);
-    }
+      const params = new URLSearchParams();
+      if (neighborhood !== "all") {
+        params.set("barrio", neighborhood);
+      }
+      if (category !== "all") {
+        params.set("sector", category);
+      }
+      if (subcategory !== "all") {
+        params.set("subgrupo", subcategory);
+      }
+      if (score > 0) {
+        params.set("score_min", String(score));
+      }
+      if (comments !== "all") {
+        params.set("comments", comments);
+      }
+      if (website !== "all") {
+        params.set("website", website);
+      }
 
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [
+      commentsFilter,
+      effectiveSelectedCategory,
+      effectiveSelectedNeighborhood,
+      effectiveSelectedSubcategory,
+      minScore,
+      pathname,
+      router,
+      websiteFilter,
+    ],
+  );
 
   useEffect(() => {
     const hasInvalidNeighborhood =
       selectedNeighborhood !== "all" && effectiveSelectedNeighborhood === "all";
     const hasInvalidCategory = selectedCategory !== "all" && effectiveSelectedCategory === "all";
+    const hasInvalidSubcategory =
+      selectedSubcategory !== "all" && effectiveSelectedSubcategory === "all";
 
-    if (!hasInvalidNeighborhood && !hasInvalidCategory) {
+    if (!hasInvalidNeighborhood && !hasInvalidCategory && !hasInvalidSubcategory) {
       return;
     }
 
     updateUrlFilters({
       neighborhood: effectiveSelectedNeighborhood,
       category: effectiveSelectedCategory,
+      subcategory: effectiveSelectedSubcategory,
       score: minScore,
+      comments: commentsFilter,
+      website: websiteFilter,
     });
   }, [
     selectedNeighborhood,
     selectedCategory,
+    selectedSubcategory,
     effectiveSelectedNeighborhood,
     effectiveSelectedCategory,
+    effectiveSelectedSubcategory,
     minScore,
+    commentsFilter,
+    websiteFilter,
+    updateUrlFilters,
   ]);
 
   async function handleSaveView() {
@@ -396,11 +477,24 @@ export function DashboardShell() {
                {effectiveSelectedCategory !== "all" && (
                  <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
                    Sector: {effectiveSelectedCategory}
-                   <button
+                    <button
+                     type="button"
+                     onClick={() => updateUrlFilters({ category: "all", subcategory: "all" })}
+                     className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                     aria-label="Quitar filtro de sector"
+                   >
+                    x
+                  </button>
+                </span>
+              )}
+              {effectiveSelectedSubcategory !== "all" && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
+                  Subsector: {getSubsectorLabel(effectiveSelectedSubcategory)}
+                  <button
                     type="button"
-                    onClick={() => updateUrlFilters({ category: "all" })}
+                    onClick={() => updateUrlFilters({ subcategory: "all" })}
                     className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
-                    aria-label="Quitar filtro de sector"
+                    aria-label="Quitar filtro de subsector"
                   >
                     x
                   </button>
@@ -434,13 +528,33 @@ export function DashboardShell() {
                   </button>
                 </span>
               )}
+              {websiteFilter !== "all" && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
+                  {websiteFilter === "with" ? "Solo con web" : "Solo sin web"}
+                  <button
+                    type="button"
+                    onClick={() => updateUrlFilters({ website: "all" })}
+                    className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                    aria-label="Quitar filtro de web"
+                  >
+                    x
+                  </button>
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
-                updateUrlFilters({ neighborhood: "all", category: "all", score: 0, comments: "all" });
+                updateUrlFilters({
+                  neighborhood: "all",
+                  category: "all",
+                  subcategory: "all",
+                  score: 0,
+                  comments: "all",
+                  website: "all",
+                });
               }}
               className="rounded-full border border-line px-4 py-2 text-sm font-semibold hover:bg-zinc-100"
             >
@@ -456,7 +570,7 @@ export function DashboardShell() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-4">
+        <div className="mt-4 grid gap-4 md:grid-cols-6">
           <label className="flex flex-col gap-2 text-sm">
             <span className="font-semibold">Barrio</span>
             <select
@@ -482,7 +596,7 @@ export function DashboardShell() {
               value={effectiveSelectedCategory}
               onChange={(event) => {
                 const value = event.target.value;
-                updateUrlFilters({ category: value });
+                updateUrlFilters({ category: value, subcategory: "all" });
               }}
               className="rounded-xl border border-line bg-white px-3 py-2"
             >
@@ -490,6 +604,25 @@ export function DashboardShell() {
               {categories.map((item) => (
                 <option key={item} value={item}>
                   {item}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-2 text-sm">
+            <span className="font-semibold">Subsector</span>
+            <select
+              value={effectiveSelectedSubcategory}
+              onChange={(event) => {
+                const value = event.target.value;
+                updateUrlFilters({ subcategory: value });
+              }}
+              className="rounded-xl border border-line bg-white px-3 py-2"
+            >
+              <option value="all">Todos</option>
+              {subcategoryOptions.map((item) => (
+                <option key={item.value} value={item.value} disabled={item.disabled}>
+                  {getSubsectorLabel(item.value)} ({item.count})
                 </option>
               ))}
             </select>
@@ -532,6 +665,25 @@ export function DashboardShell() {
               <option value="all">Mostrar todos</option>
               <option value="with">Ocultar sin comentarios</option>
               <option value="without">Solo sin comentarios</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-2 text-sm">
+            <span className="font-semibold">Web</span>
+            <select
+              value={websiteFilter}
+              onChange={(event) => {
+                const value =
+                  event.target.value === "with" || event.target.value === "without"
+                    ? event.target.value
+                    : "all";
+                updateUrlFilters({ website: value });
+              }}
+              className="rounded-xl border border-line bg-white px-3 py-2"
+            >
+              <option value="all">Mostrar todos</option>
+              <option value="without">Solo sin web</option>
+              <option value="with">Solo con web</option>
             </select>
           </label>
         </div>
