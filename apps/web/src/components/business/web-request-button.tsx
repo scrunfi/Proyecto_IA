@@ -241,6 +241,11 @@ function findPreviewHtml(value: unknown): string | null {
 
 function findHtmlString(value: unknown): string | null {
   if (typeof value === "string") {
+    const parsed = tryParseJson(value.trim());
+    if (parsed) {
+      const fromParsed = findHtmlString(parsed);
+      if (fromParsed) return fromParsed;
+    }
     if (/<!doctype html|<html[\s>]|<body[\s>]/i.test(value)) return value;
     return null;
   }
@@ -300,6 +305,11 @@ function openHtmlPreview(html: string): void {
 function findHttpUrl(value: unknown): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
+    const parsed = tryParseJson(trimmed);
+    if (parsed) {
+      const fromParsed = findHttpUrl(parsed);
+      if (fromParsed) return fromParsed;
+    }
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
     const embeddedMatch = trimmed.match(/https?:\/\/[^\s"'<>]+/i);
     return embeddedMatch ? embeddedMatch[0] : null;
@@ -337,6 +347,16 @@ function findHttpUrl(value: unknown): string | null {
   }
 
   return null;
+}
+
+function tryParseJson(raw: string): unknown | null {
+  if (!raw) return null;
+  if (!(raw.startsWith("{") || raw.startsWith("["))) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
