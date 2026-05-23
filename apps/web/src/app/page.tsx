@@ -1,5 +1,7 @@
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { PrecomputeAllButton } from "@/components/admin/precompute-all-button";
+import { GenerateAllWebsButton } from "@/components/admin/generate-all-webs-button";
+import { ChatWidget } from "@/components/chat/chat-widget";
 
 export default function Home() {
   return (
@@ -26,8 +28,11 @@ export default function Home() {
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <PrecomputeAllButton />
+          <GenerateAllWebsButton />
         </div>
       </section>
+
+      <ChatWidget context="home" />
     </div>
   );
 }

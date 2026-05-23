@@ -1,0 +1,250 @@
+{
+  "name": "IMPORT SHOPS TO QDRANT (SIMPLE)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1000001-0000-4000-8000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "find",
+        "collection": "shops",
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "b1000001-0000-4000-8000-000000000002",
+      "name": "MongoDB Find Shops",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [
+        220,
+        260
+      ],
+      "credentials": {
+        "mongoDb": {
+          "id": "REPLACE_WITH_MONGODB_CREDENTIAL_ID",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  const s = item.json || {};\n  const id = s._id?.toString?.() ?? s.id ?? `shop-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;\n  const barrio = s.barrio?.name ?? s.neighborhood ?? '';\n  const category = s.subcategory ?? s.category ?? '';\n  const address = s.address ?? '';\n  const score = typeof s.score === 'number' ? s.score : '';\n  const gap = typeof s.gap === 'number' ? s.gap : '';\n  const reviews = typeof s.reviews === 'number' ? s.reviews : '';\n  const hasWebsite = typeof s.has_website === 'boolean' ? (s.has_website ? 'si' : 'no') : '';\n  const coords = Array.isArray(s.location?.coordinates) ? s.location.coordinates : [];\n\n  const text = [\n    `Negocio: ${s.name ?? ''}`,\n    `Categoria: ${category}`,\n    `Barrio: ${barrio}`,\n    `Direccion: ${address}`,\n    `Score: ${score}`,\n    `Gap: ${gap}`,\n    `Resenas: ${reviews}`,\n    `Web: ${hasWebsite}`,\n    `Coordenadas: ${coords.join(',')}`\n  ].filter(Boolean).join('\\n');\n\n  out.push({\n    json: {\n      point_id: id,\n      embedding_input: text,\n      payload: {\n        name: s.name ?? null,\n        category: s.category ?? null,\n        subcategory: s.subcategory ?? null,\n        neighborhood: barrio || null,\n        address: address || null,\n        score: s.score ?? null,\n        gap: s.gap ?? null,\n        reviews: s.reviews ?? null,\n        has_website: s.has_website ?? null,\n        source: 'shops',\n        text\n      }\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "b1000001-0000-4000-8000-000000000003",
+      "name": "Build Embedding Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "b1000001-0000-4000-8000-000000000008",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        610,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embeddings",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"nomic-embed-text:latest\", \"prompt\": $json.embedding_input } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "b1000001-0000-4000-8000-000000000004",
+      "name": "Create Embedding (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "b1000001-0000-4000-8000-000000000005",
+      "name": "Merge Source + Embedding",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const vector = j.embedding || j.data?.[0]?.embedding;\n  if (!Array.isArray(vector) || vector.length === 0) continue;\n\n  out.push({\n    json: {\n      points: [\n        {\n          id: j.point_id,\n          vector,\n          payload: j.payload || {}\n        }\n      ]\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "b1000001-0000-4000-8000-000000000006",
+      "name": "Build Qdrant Points",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1210,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/shops_embedding/points?wait=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "AIz92481209-9b8e-4c1a-8c3e-9f0b2d5c9f1a"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "b1000001-0000-4000-8000-000000000007",
+      "name": "Upsert Points (Qdrant)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1450,
+        260
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "MongoDB Find Shops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MongoDB Find Shops": {
+      "main": [
+        [
+          {
+            "node": "Build Embedding Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embedding Input": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Create Embedding (Ollama)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Source + Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Embedding (Ollama)": {
+      "main": [
+        [
+          {
+            "node": "Merge Source + Embedding",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Upsert Points (Qdrant)": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Source + Embedding": {
+      "main": [
+        [
+          {
+            "node": "Build Qdrant Points",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Qdrant Points": {
+      "main": [
+        [
+          {
+            "node": "Upsert Points (Qdrant)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b1000001-0000-4000-8000-000000000099",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "IMPORTQDRANTSIMPLE001",
+  "tags": []
+}

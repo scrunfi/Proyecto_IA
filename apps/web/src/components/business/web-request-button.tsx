@@ -13,6 +13,8 @@ type ApiPayload = {
   detail?: string;
   updated_at?: string;
   response?: unknown;
+  has_html?: boolean;
+  html?: string | null;
 };
 
 export function WebRequestButton({ businessId }: WebRequestButtonProps) {
@@ -21,6 +23,30 @@ export function WebRequestButton({ businessId }: WebRequestButtonProps) {
   const [progress, setProgress] = useState<number>(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStoredPreview() {
+      const page = await fetchLatestPage(businessId);
+      if (cancelled) return;
+
+      const pagePreviewUrl = findPreviewUrl(page);
+      const pagePreviewHtml = findPreviewHtml(page);
+      if (!pagePreviewUrl && !pagePreviewHtml) return;
+
+      setPreviewUrl(pagePreviewUrl);
+      setPreviewHtml(pagePreviewHtml);
+      setStatus("ok");
+      setMessage(`Web almacenada encontrada · updated_at: ${page.updated_at ?? "-"}`);
+    }
+
+    void loadStoredPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [businessId]);
 
   useEffect(() => {
     if (status !== "ok") return;
@@ -42,8 +68,9 @@ export function WebRequestButton({ businessId }: WebRequestButtonProps) {
         const latestStatus = payload.status ?? "desconocido";
         const baseMessage = `Ultima solicitud: ${latestStatus} · request_id: ${payload.request_id ?? "-"} · updated_at: ${payload.updated_at ?? "-"}`;
         setMessage(payload.error ? `${baseMessage} · error: ${payload.error}` : baseMessage);
-        setPreviewUrl(findPreviewUrl(payload.response));
-        setPreviewHtml(findPreviewHtml(payload.response));
+        const page = await fetchLatestPage(businessId);
+        setPreviewUrl(findPreviewUrl(page));
+        setPreviewHtml(findPreviewHtml(page) ?? findPreviewHtml(payload.response));
 
         if (latestStatus === "sent") {
           setProgress(100);
@@ -89,8 +116,9 @@ export function WebRequestButton({ businessId }: WebRequestButtonProps) {
       setMessage(`Solicitud enviada a n8n. request_id: ${reqId}. Esperando generacion...`);
 
       const latest = await waitForWebGeneration(businessId, reqId, setProgress);
-      const generatedPreview = findPreviewUrl(latest.response);
-      const generatedHtml = findPreviewHtml(latest.response);
+      const latestPage = await fetchLatestPage(businessId);
+      const generatedPreview = findPreviewUrl(latestPage);
+      const generatedHtml = findPreviewHtml(latestPage) ?? findPreviewHtml(latest.response);
 
       setStatus("ok");
       setProgress(100);
@@ -124,10 +152,19 @@ export function WebRequestButton({ businessId }: WebRequestButtonProps) {
       }
       setStatus("ok");
       setProgress(payload.status === "sent" ? 100 : 60);
-      setPreviewUrl(findPreviewUrl(payload.response));
-      setPreviewHtml(findPreviewHtml(payload.response));
+      const page = await fetchLatestPage(businessId);
+      const pagePreviewUrl = findPreviewUrl(page);
+      const pagePreviewHtml = findPreviewHtml(page);
+      setPreviewUrl(pagePreviewUrl);
+      setPreviewHtml(pagePreviewHtml ?? findPreviewHtml(payload.response));
       const baseMessage = `Ultima solicitud: ${payload.status ?? "desconocido"} · request_id: ${payload.request_id ?? "-"} · updated_at: ${payload.updated_at ?? "-"}`;
-      setMessage(payload.error ? `${baseMessage} · error: ${payload.error}` : baseMessage);
+      if (payload.error) {
+        setMessage(`${baseMessage} · error: ${payload.error}`);
+      } else if (pagePreviewUrl || pagePreviewHtml) {
+        setMessage(`${baseMessage} · web almacenada disponible para previsualizar`);
+      } else {
+        setMessage(baseMessage);
+      }
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Error desconocido");
@@ -188,10 +225,10 @@ async function waitForWebGeneration(
   requestId: string,
   setProgress: (value: number) => void,
 ): Promise<ApiPayload> {
-  const maxAttempts = 20;
+  const maxAttempts = 120;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    await sleep(1500);
+    await sleep(2000);
     let payload: ApiPayload;
     try {
       const response = await fetch("/api/web-request", {
@@ -222,13 +259,25 @@ async function waitForWebGeneration(
     }
   }
 
-  throw new Error("La generacion sigue en curso. Vuelve a consultar en unos segundos.");
+  throw new Error("La generacion sigue en curso. Puedes consultar el ultimo estado en unos minutos.");
+}
+
+async function fetchLatestPage(businessId: string): Promise<ApiPayload> {
+  try {
+    const response = await fetch("/api/web-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "latest_page", shop_id: businessId }),
+    });
+    if (!response.ok) return {};
+    return (await readJsonSafe(response)) as ApiPayload;
+  } catch {
+    return {};
+  }
 }
 
 function findPreviewUrl(value: unknown): string | null {
-  const direct = findHttpUrl(value);
-  if (!direct) return null;
-  return direct;
+  return findPageUrlByKnownKeys(value);
 }
 
 function findPreviewHtml(value: unknown): string | null {
@@ -294,59 +343,80 @@ function decodeBase64ToText(base64: string): string | null {
 }
 
 function openHtmlPreview(html: string): void {
-  const previewWindow = window.open("", "_blank", "noopener,noreferrer");
+  const previewWindow = window.open("", "_blank");
   if (!previewWindow) return;
 
+  const raw = html.trim();
+  const documentHtml = /<html[\s>]/i.test(raw)
+    ? raw
+    : `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview</title></head><body>${raw}</body></html>`;
+
   previewWindow.document.open();
-  previewWindow.document.write(html);
+  previewWindow.document.write(documentHtml);
   previewWindow.document.close();
 }
 
-function findHttpUrl(value: unknown): string | null {
+function findPageUrlByKnownKeys(value: unknown): string | null {
+  if (!value) return null;
+
   if (typeof value === "string") {
-    const trimmed = value.trim();
-    const parsed = tryParseJson(trimmed);
-    if (parsed) {
-      const fromParsed = findHttpUrl(parsed);
-      if (fromParsed) return fromParsed;
-    }
-    if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    const embeddedMatch = trimmed.match(/https?:\/\/[^\s"'<>]+/i);
-    return embeddedMatch ? embeddedMatch[0] : null;
+    const parsed = tryParseJson(value.trim());
+    return parsed ? findPageUrlByKnownKeys(parsed) : null;
   }
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findHttpUrl(item);
+      const found = findPageUrlByKnownKeys(item);
       if (found) return found;
     }
     return null;
   }
 
-  if (!value || typeof value !== "object") return null;
+  if (typeof value !== "object") return null;
 
   const raw = value as Record<string, unknown>;
   const preferredKeys = [
     "preview_url",
     "previewUrl",
-    "url",
+    "public_url",
+    "publicUrl",
     "website_url",
     "websiteUrl",
-    "link",
     "web_url",
+    "webUrl",
+    "url",
   ];
 
   for (const key of preferredKeys) {
-    const found = findHttpUrl(raw[key]);
-    if (found) return found;
+    const candidate = raw[key];
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    if (isLikelyPageUrl(trimmed)) return trimmed;
   }
 
-  for (const nested of Object.values(raw)) {
-    const found = findHttpUrl(nested);
+  const nestedKeys = ["response", "data", "result", "payload"];
+  for (const key of nestedKeys) {
+    const found = findPageUrlByKnownKeys(raw[key]);
     if (found) return found;
   }
 
   return null;
+}
+
+function isLikelyPageUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+
+    if (host.includes("jsdelivr.net") || host.includes("tailwindcss.com")) return false;
+    if (/\.(css|js|map|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|otf)(\?|$)/.test(path)) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function tryParseJson(raw: string): unknown | null {

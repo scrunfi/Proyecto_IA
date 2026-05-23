@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { BusinessContextMap } from "@/components/business/business-context-map";
 import { AiAnalysisButton } from "@/components/business/ai-analysis-button";
 import { WebRequestButton } from "@/components/business/web-request-button";
+import { ChatWidget } from "@/components/chat/chat-widget";
 import { backendFetch } from "@/lib/backend-client";
 import { toBusiness } from "@/lib/business-adapter";
 import { getScoreTheme } from "@/lib/score-theme";
@@ -325,6 +326,14 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         </section>
 
       </section>
+
+      <ChatWidget
+        context="business"
+        businessId={business.id}
+        businessName={business.name}
+        businessNeighborhood={business.neighborhood}
+        businessSector={sectorLabel}
+      />
 
     </div>
   );

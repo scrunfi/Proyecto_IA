@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { backendFetch } from "@/lib/backend-client";
 
 type Body = {
-  action?: "create" | "latest";
+  action?: "create" | "latest" | "latest_page";
   shop_id?: string;
 };
 
@@ -27,6 +27,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const payload = await backendFetch<unknown>(`/shops/id/${encodeURIComponent(shopId)}/web-request`, {
         method: "POST",
       });
+      res.status(200).json(payload);
+      return;
+    }
+
+    if (action === "latest_page") {
+      const payload = await backendFetch<unknown>(`/shops/id/${encodeURIComponent(shopId)}/web-page/latest`);
       res.status(200).json(payload);
       return;
     }

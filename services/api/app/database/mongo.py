@@ -17,7 +17,9 @@ shop_reviews_collection = db["shop_reviews"]
 ingesta_runs_collection = db["ingesta_runs"]
 ai_analysis_collection = db["ai_analysis"]
 precompute_jobs_collection = db["precompute_jobs"]
+web_generation_jobs_collection = db["web_generation_jobs"]
 web_requests_collection = db["web_requests"]
+shop_web_pages_collection = db["shop_web_pages"]
 
 
 async def ensure_indexes() -> None:
@@ -48,8 +50,17 @@ async def ensure_indexes() -> None:
     await precompute_jobs_collection.create_index("status")
     await precompute_jobs_collection.create_index("updated_at")
 
+    # JOBS DE GENERACION MASIVA DE WEBS
+    await web_generation_jobs_collection.create_index("job_id", unique=True)
+    await web_generation_jobs_collection.create_index("status")
+    await web_generation_jobs_collection.create_index("updated_at")
+
     # SOLICITUDES DE WEB EXTERNA (n8n)
     await web_requests_collection.create_index("request_id", unique=True)
     await web_requests_collection.create_index("shop_id")
     await web_requests_collection.create_index("status")
     await web_requests_collection.create_index("created_at")
+
+    # HTML DE WEBS GENERADAS (1 version por negocio)
+    await shop_web_pages_collection.create_index("shop_id", unique=True)
+    await shop_web_pages_collection.create_index("updated_at")

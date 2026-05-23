@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+import html
+import re
 from uuid import uuid4
 from urllib.parse import urlparse, urlunparse
 import json
@@ -14,8 +16,10 @@ from app.database.mongo import (
     ai_analysis_collection,
     ingesta_runs_collection,
     precompute_jobs_collection,
+    shop_web_pages_collection,
     shop_reviews_collection,
     shops_collection,
+    web_generation_jobs_collection,
     web_requests_collection,
 )
 from app.services.barrios_service import infer_barrio_name, load_barrios_geojson
@@ -26,8 +30,10 @@ from app.services.google_places_service import fetch_google_reviews
 
 router = APIRouter()
 PRECOMPUTE_CANCEL_FLAGS: dict[str, bool] = {}
+WEB_GENERATION_CANCEL_FLAGS: dict[str, bool] = {}
 logger = logging.getLogger(__name__)
 PRECOMPUTE_PROGRESS_EVERY = max(1, int(os.getenv("PRECOMPUTE_PROGRESS_EVERY", "50")))
+WEB_GENERATION_PROGRESS_EVERY = max(1, int(os.getenv("WEB_GENERATION_PROGRESS_EVERY", "50")))
 
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "").strip()
 N8N_WEBHOOK_WEB_URL = os.getenv("N8N_WEBHOOK_WEB_URL", "").strip()
@@ -35,6 +41,8 @@ N8N_WEBHOOK_AUTH_HEADER = os.getenv("N8N_WEBHOOK_AUTH_HEADER", "").strip()
 N8N_WEBHOOK_AUTH_VALUE = os.getenv("N8N_WEBHOOK_AUTH_VALUE", "").strip()
 N8N_TIMEOUT_SECONDS = float(os.getenv("N8N_TIMEOUT_SECONDS", "420"))
 N8N_WEB_TIMEOUT_SECONDS = float(os.getenv("N8N_WEB_TIMEOUT_SECONDS", str(N8N_TIMEOUT_SECONDS)))
+N8N_WEB_RETRIES = max(1, int(os.getenv("N8N_WEB_RETRIES", "2")))
+N8N_WEB_RETRY_DELAY_SECONDS = max(0.0, float(os.getenv("N8N_WEB_RETRY_DELAY_SECONDS", "2")))
 
 
 def _to_utc_aware(value: datetime | None) -> datetime | None:
@@ -45,7 +53,7 @@ def _to_utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-async def _request_n8n_web_request(shop: dict):
+async def _request_n8n_web_request(shop: dict, request_id: str):
     webhook_url = N8N_WEBHOOK_WEB_URL or N8N_WEBHOOK_URL
     if not webhook_url:
         raise HTTPException(status_code=503, detail="N8N_WEBHOOK_WEB_URL no configurada")
@@ -69,6 +77,7 @@ async def _request_n8n_web_request(shop: dict):
         "gap": shop.get("gap"),
         "has_website": _has_website(shop),
         "website": (tags or {}).get("website") if isinstance(tags, dict) else None,
+        "request_id": request_id,
     }
 
     timeout = httpx.Timeout(N8N_WEB_TIMEOUT_SECONDS, connect=10.0)
@@ -78,13 +87,28 @@ async def _request_n8n_web_request(shop: dict):
 
     try:
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            response = await client.post(
-                webhook_url,
-                params={"id": resolved_id, "shop_id": business_id},
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
+            last_http_error: httpx.HTTPError | None = None
+            response = None
+
+            for attempt in range(1, N8N_WEB_RETRIES + 1):
+                try:
+                    response = await client.post(
+                        webhook_url,
+                        params={"id": resolved_id, "shop_id": business_id, "request_id": request_id},
+                        json=payload,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError:
+                    raise
+                except httpx.HTTPError as exc:
+                    last_http_error = exc
+                    if attempt < N8N_WEB_RETRIES and N8N_WEB_RETRY_DELAY_SECONDS > 0:
+                        await asyncio.sleep(N8N_WEB_RETRY_DELAY_SECONDS)
+
+            if response is None:
+                raise last_http_error or httpx.ConnectError("No se pudo conectar con n8n")
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
         if len(detail) > 400:
@@ -117,7 +141,30 @@ async def _run_shop_web_request(request_id: str, shop_id: str, shop: dict):
                 }
             },
         )
-        webhook_response = await _request_n8n_web_request(shop)
+        webhook_response = await _request_n8n_web_request(shop, request_id)
+        extracted_html = _extract_html_from_payload(webhook_response)
+        generated_html = _normalize_html_document(extracted_html)
+        if extracted_html:
+            now = datetime.now(timezone.utc)
+            await shop_web_pages_collection.update_one(
+                {"shop_id": shop_id},
+                {
+                    "$set": {
+                        "shop_id": shop_id,
+                        "osm_id": ((shop.get("osm") or {}).get("id")),
+                        "request_id": request_id,
+                        "status": "sent" if generated_html else "sent_raw",
+                        "source": "n8n",
+                        "html": generated_html or extracted_html,
+                        "html_renderable": bool(generated_html),
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
         await web_requests_collection.update_one(
             {"request_id": request_id},
             {
@@ -250,6 +297,22 @@ def _shop_tags(shop: dict) -> dict:
 def _has_website(shop: dict) -> bool:
     tags = _shop_tags(shop)
     return any(tags.get(key) for key in ["website", "contact:website", "brand:website"])
+
+
+def _shop_id_candidates(shop_id: str) -> list[str]:
+    base = str(shop_id or "").strip()
+    if not base:
+        return []
+
+    candidates = [base]
+    if base.startswith("osm:node:"):
+        tail = base.split(":")[-1].strip()
+        if tail:
+            candidates.append(tail)
+    elif base.isdigit():
+        candidates.append(f"osm:node:{base}")
+
+    return list(dict.fromkeys(candidates))
 
 
 def _build_fallback_ai_payload(n8n_error: str):
@@ -485,6 +548,92 @@ async def _build_actions_only_ai_payload(shop_id: str) -> dict:
     }
 
 
+def _extract_html_from_payload(payload: object) -> str | None:
+    if isinstance(payload, str):
+        text = payload.strip()
+        if not text:
+            return None
+        if "<!DOCTYPE html" in text or "<html" in text.lower():
+            return text
+        return None
+
+    if isinstance(payload, list):
+        for item in payload:
+            found = _extract_html_from_payload(item)
+            if found:
+                return found
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    raw = payload
+    preferred_keys = ["html", "output", "content", "result", "raw", "response"]
+    for key in preferred_keys:
+        found = _extract_html_from_payload(raw.get(key))
+        if found:
+            return found
+
+    for value in raw.values():
+        found = _extract_html_from_payload(value)
+        if found:
+            return found
+
+    return None
+
+
+def _normalize_html_document(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    text = html.unescape(text).strip()
+
+    # Remove template-like syntax (Jinja/Liquid/Handlebars) so output remains renderable HTML.
+    if "{%" in text or "%}" in text:
+        text = re.sub(r"\{%[\s\S]*?%\}", "", text)
+    if "{{" in text or "}}" in text:
+        text = re.sub(r"\{\{[\s\S]*?\}\}", "", text)
+
+    # Remove common pseudo-template control lines leaked by small local models.
+    text = re.sub(r"(?im)^\s*(if|elif|else)\b[^\n]*$", "", text)
+    text = re.sub(r"(?im)^\s*\{%\s*set\b[^\n]*$", "", text)
+
+    html_match = re.search(r"<!DOCTYPE html>[\s\S]*</html>", text, re.IGNORECASE)
+    if html_match:
+        text = html_match.group(0).strip()
+    else:
+        body_match = re.search(r"<html[\s\S]*</html>", text, re.IGNORECASE)
+        if body_match:
+            text = "<!DOCTYPE html>\n" + body_match.group(0).strip()
+        else:
+            start = re.search(r"<html[\s\S]*", text, re.IGNORECASE)
+            if start:
+                text = "<!DOCTYPE html>\n" + start.group(0).strip()
+
+    if "</body>" not in text.lower() and "<body" in text.lower():
+        text = f"{text}\n</body>"
+    if "</html>" not in text.lower() and "<html" in text.lower():
+        text = f"{text}\n</html>"
+
+    lower = text.lower()
+    if "<html" not in lower or "</html>" not in lower:
+        return None
+    if "<body" not in lower:
+        text = re.sub(r"(<html[^>]*>)", r"\1<body>", text, count=1, flags=re.IGNORECASE)
+        if "</body>" not in text.lower():
+            text = text.replace("</html>", "</body></html>", 1)
+
+    return text
+
+
 async def _run_precompute_job(job_id: str, batch_size: int, only_missing: bool, force_refresh: bool):
     started_at = datetime.now(timezone.utc)
     logger.info(
@@ -603,6 +752,121 @@ async def _run_precompute_job(job_id: str, batch_size: int, only_missing: bool, 
         },
     )
     PRECOMPUTE_CANCEL_FLAGS.pop(job_id, None)
+
+
+async def _run_web_generation_job(job_id: str, batch_size: int, only_missing_website: bool):
+    started_at = datetime.now(timezone.utc)
+    logger.info(
+        "web_generation_job[%s] started batch_size=%s only_missing_website=%s",
+        job_id,
+        batch_size,
+        only_missing_website,
+    )
+
+    queued = 0
+    errors = 0
+    processed = 0
+    round_skip = 0
+
+    while True:
+        if WEB_GENERATION_CANCEL_FLAGS.get(job_id):
+            break
+
+        filters: dict = {"active": True}
+
+        total_candidates = await shops_collection.count_documents(filters)
+        cursor = (
+            shops_collection.find(filters, {"_id": 1, "osm.id": 1, "tags": 1, "osm.tags": 1})
+            .sort("_id", 1)
+            .skip(round_skip)
+            .limit(batch_size)
+        )
+
+        round_processed = 0
+        async for shop in cursor:
+            if WEB_GENERATION_CANCEL_FLAGS.get(job_id):
+                break
+
+            shop_id = str(shop.get("_id") or "").strip()
+            if not shop_id:
+                continue
+
+            if only_missing_website and _has_website(shop):
+                continue
+
+            request_id = str(uuid4())
+            now = datetime.now(timezone.utc)
+            try:
+                await web_requests_collection.insert_one(
+                    {
+                        "request_id": request_id,
+                        "shop_id": shop_id,
+                        "status": "queued",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                asyncio.create_task(_run_shop_web_request(request_id, shop_id, shop))
+                queued += 1
+            except Exception:
+                errors += 1
+
+            processed += 1
+            round_processed += 1
+            if processed % WEB_GENERATION_PROGRESS_EVERY == 0:
+                logger.info(
+                    "web_generation_job[%s] progress processed=%s queued=%s errors=%s total_candidates=%s",
+                    job_id,
+                    processed,
+                    queued,
+                    errors,
+                    total_candidates,
+                )
+
+            await web_generation_jobs_collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": "running",
+                        "processed": processed,
+                        "queued": queued,
+                        "errors": errors,
+                        "total_candidates": total_candidates,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+
+        if round_processed == 0:
+            break
+
+        round_skip += batch_size
+
+    final_status = "cancelled" if WEB_GENERATION_CANCEL_FLAGS.get(job_id) else "completed"
+    elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+    logger.info(
+        "web_generation_job[%s] finished status=%s processed=%s queued=%s errors=%s elapsed_seconds=%.2f",
+        job_id,
+        final_status,
+        processed,
+        queued,
+        errors,
+        elapsed_seconds,
+    )
+    await web_generation_jobs_collection.update_one(
+        {"job_id": job_id},
+        {
+            "$set": {
+                "status": final_status,
+                "processed": processed,
+                "queued": queued,
+                "errors": errors,
+                "updated_at": datetime.now(timezone.utc),
+                "finished_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    WEB_GENERATION_CANCEL_FLAGS.pop(job_id, None)
 
 
 def _score_breakdown_from_tags(tags: dict) -> list[dict]:
@@ -1278,14 +1542,38 @@ async def create_shop_web_request(shop_id: str):
 
 @router.get("/shops/id/{shop_id}/web-request/latest")
 async def get_latest_shop_web_request(shop_id: str):
+    shop_id_values = _shop_id_candidates(shop_id)
     row = await web_requests_collection.find_one(
-        {"shop_id": shop_id},
+        {"shop_id": {"$in": shop_id_values}},
         {"_id": 0},
         sort=[("created_at", -1)],
     )
     if not row:
         raise HTTPException(status_code=404, detail="No hay solicitudes de web para este negocio")
     return row
+
+
+@router.get("/shops/id/{shop_id}/web-page/latest")
+async def get_latest_shop_web_page(shop_id: str):
+    shop_id_values = _shop_id_candidates(shop_id)
+    row = await shop_web_pages_collection.find_one(
+        {"shop_id": {"$in": shop_id_values}},
+        {"_id": 0},
+        sort=[("updated_at", -1)],
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="No hay web generada para este negocio")
+
+    html = _normalize_html_document(row.get("html") if isinstance(row.get("html"), str) else None)
+    return {
+        "shop_id": row.get("shop_id", shop_id),
+        "status": row.get("status", "unknown"),
+        "request_id": row.get("request_id"),
+        "updated_at": row.get("updated_at"),
+        "has_html": isinstance(html, str) and bool(html.strip()),
+        "html": html if isinstance(html, str) else None,
+        "error": row.get("error"),
+    }
 
 
 @router.post("/shops/id/{shop_id}/ai-analysis/precompute")
@@ -1528,6 +1816,134 @@ async def cancel_precompute_job(job_id: str):
             },
         )
         PRECOMPUTE_CANCEL_FLAGS.pop(job_id, None)
+        return {"status": "cancelled", "job_id": job_id}
+
+    return {"status": "cancelling", "job_id": job_id}
+
+
+@router.post("/shops/web-generation-job/start")
+async def start_web_generation_job(
+    batch_size: int = Query(default=25, ge=1, le=500),
+    only_missing_website: bool = Query(default=True),
+):
+    active_job = await web_generation_jobs_collection.find_one(
+        {"status": "running"},
+        {"_id": 0, "job_id": 1, "updated_at": 1},
+        sort=[("created_at", -1)],
+    )
+    if active_job:
+        updated_at = _to_utc_aware(active_job.get("updated_at"))
+        stale = False
+        if updated_at is not None:
+            stale = datetime.now(timezone.utc) - updated_at > timedelta(minutes=12)
+        else:
+            stale = True
+
+        if not stale:
+            return {"status": "already_running", "job_id": active_job.get("job_id")}
+
+        stale_job_id = str(active_job.get("job_id") or "")
+        await web_generation_jobs_collection.update_one(
+            {"job_id": stale_job_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "updated_at": datetime.now(timezone.utc),
+                    "finished_at": datetime.now(timezone.utc),
+                    "stale_closed": True,
+                }
+            },
+        )
+        WEB_GENERATION_CANCEL_FLAGS.pop(stale_job_id, None)
+
+    job_id = str(uuid4())
+    now = datetime.now(timezone.utc)
+    await web_generation_jobs_collection.insert_one(
+        {
+            "job_id": job_id,
+            "status": "running",
+            "processed": 0,
+            "queued": 0,
+            "errors": 0,
+            "total_candidates": 0,
+            "params": {
+                "batch_size": batch_size,
+                "only_missing_website": only_missing_website,
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    WEB_GENERATION_CANCEL_FLAGS[job_id] = False
+    asyncio.create_task(_run_web_generation_job(job_id, batch_size, only_missing_website))
+    return {"status": "started", "job_id": job_id}
+
+
+@router.get("/shops/web-generation-job/status")
+async def get_web_generation_job_status(job_id: str | None = None):
+    query = {"job_id": job_id} if job_id else {}
+    sort = None if job_id else [("created_at", -1)]
+    job = await web_generation_jobs_collection.find_one(query, {"_id": 0}, sort=sort)
+    if not job:
+        raise HTTPException(status_code=404, detail="No hay job de generacion web")
+
+    if job.get("status") == "cancelling":
+        updated_at = _to_utc_aware(job.get("updated_at"))
+        stale = False
+        if updated_at is not None:
+            stale = datetime.now(timezone.utc) - updated_at > timedelta(seconds=45)
+        else:
+            stale = True
+
+        if stale:
+            await web_generation_jobs_collection.update_one(
+                {"job_id": job.get("job_id")},
+                {
+                    "$set": {
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            WEB_GENERATION_CANCEL_FLAGS.pop(str(job.get("job_id") or ""), None)
+            job["status"] = "cancelled"
+            job["finished_at"] = datetime.now(timezone.utc)
+            job["updated_at"] = datetime.now(timezone.utc)
+
+    return job
+
+
+@router.post("/shops/web-generation-job/cancel")
+async def cancel_web_generation_job(job_id: str):
+    WEB_GENERATION_CANCEL_FLAGS[job_id] = True
+    result = await web_generation_jobs_collection.update_one(
+        {"job_id": job_id},
+        {
+            "$set": {
+                "status": "cancelling",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="job_id no encontrado")
+
+    current = await web_generation_jobs_collection.find_one({"job_id": job_id}, {"_id": 0, "status": 1})
+    if (current or {}).get("status") not in {"running", "cancelling"}:
+        await web_generation_jobs_collection.update_one(
+            {"job_id": job_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "finished_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        WEB_GENERATION_CANCEL_FLAGS.pop(job_id, None)
         return {"status": "cancelled", "job_id": job_id}
 
     return {"status": "cancelling", "job_id": job_id}

@@ -1,0 +1,180 @@
+{
+  "name": "IMPORT SHOPS TO QDRANT",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b001",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "find",
+        "collection": "shops",
+        "returnAll": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b002",
+      "name": "MongoDB Find Shops",
+      "credentials": {
+        "mongoDb": {
+          "id": "REPLACE_WITH_MONGODB_CREDENTIAL_ID",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const docs = [];\nfor (const item of $input.all()) {\n  const s = item.json || {};\n  const id = s._id?.toString?.() ?? s.id ?? `shop-${Math.random().toString(36).slice(2)}`;\n  const barrio = s.barrio?.name ?? s.neighborhood ?? '';\n  const category = s.subcategory ?? s.category ?? '';\n  const address = s.address ?? '';\n  const score = typeof s.score === 'number' ? s.score : '';\n  const gap = typeof s.gap === 'number' ? s.gap : '';\n  const reviews = typeof s.reviews === 'number' ? s.reviews : '';\n  const hasWebsite = typeof s.has_website === 'boolean' ? (s.has_website ? 'si' : 'no') : '';\n  const coords = Array.isArray(s.location?.coordinates) ? s.location.coordinates : [];\n\n  const text = [\n    `Negocio: ${s.name ?? ''}`,\n    `Categoria: ${category}`,\n    `Barrio: ${barrio}`,\n    `Direccion: ${address}`,\n    `Score: ${score}`,\n    `Gap: ${gap}`,\n    `Resenas: ${reviews}`,\n    `Web: ${hasWebsite}`,\n    `Coordenadas: ${coords.join(',')}`\n  ].filter(Boolean).join('\\n');\n\n  docs.push({\n    json: {\n      id,\n      text,\n      metadata: {\n        name: s.name ?? null,\n        category: s.category ?? null,\n        subcategory: s.subcategory ?? null,\n        neighborhood: barrio || null,\n        score: s.score ?? null,\n        gap: s.gap ?? null,\n        reviews: s.reviews ?? null,\n        has_website: s.has_website ?? null\n      }\n    }\n  });\n}\nreturn docs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b003",
+      "name": "Build Documents"
+    },
+    {
+      "parameters": {
+        "mode": "insert-documents",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "shops_embedding",
+          "mode": "list",
+          "cachedResultName": "shops_embedding"
+        },
+        "options": {
+          "clearCollection": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        760,
+        300
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b004",
+      "name": "Qdrant Upsert Documents",
+      "credentials": {
+        "qdrantApi": {
+          "id": "kjEJbGu3JBSTQH7v",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "={{ { \"pageContent\": $json.text, \"metadata\": $json.metadata ?? {} } }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        760,
+        120
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b006",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        760,
+        520
+      ],
+      "id": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b005",
+      "name": "Embeddings Ollama",
+      "credentials": {
+        "ollamaApi": {
+          "id": "oatSsLCu7HddpDeS",
+          "name": "Ollama account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "MongoDB Find Shops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MongoDB Find Shops": {
+      "main": [
+        [
+          {
+            "node": "Build Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Documents": {
+      "main": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Upsert Documents",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Upsert Documents",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1f0f4b5-2f8f-4e96-9f95-4f1c08b8b099",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "IMPORTQDRANTSHOPS001",
+  "tags": []
+}
