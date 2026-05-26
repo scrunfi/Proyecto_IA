@@ -114,6 +114,10 @@ function normalizeCategory(value: string) {
     .toLowerCase();
 }
 
+function normalizeSearch(value: string) {
+  return normalizeCategory(value).trim();
+}
+
 function getCategoryGroup(value: string) {
   const normalized = normalizeCategory(value);
 
@@ -148,8 +152,8 @@ export function DashboardShell() {
   const MIN_SUBCATEGORY_COUNT = 4;
 
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const pathname = usePathname() ?? "/";
+  const searchParams = useSearchParams() ?? new URLSearchParams();
 
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [neighborhoods, setNeighborhoods] = useState<string[]>([]);
@@ -183,6 +187,8 @@ export function DashboardShell() {
         ? selectedCategory
         : getCategoryGroup(selectedCategory);
   const selectedSubcategory = searchParams.get("subgrupo") ?? searchParams.get("subcategory") ?? "all";
+  const businessNameQuery = searchParams.get("nombre") ?? searchParams.get("q") ?? "";
+  const normalizedBusinessNameQuery = normalizeSearch(businessNameQuery);
   const rawScore = Number(searchParams.get("score_min") ?? "0");
   const minScore = Number.isNaN(rawScore) ? 0 : Math.max(0, Math.min(100, rawScore));
   const commentsParam = searchParams.get("comments");
@@ -278,10 +284,13 @@ export function DashboardShell() {
         websiteFilter === "all" ||
         (websiteFilter === "with" && item.hasWebsite) ||
         (websiteFilter === "without" && !item.hasWebsite);
+      const nameMatch =
+        normalizedBusinessNameQuery.length === 0 ||
+        normalizeSearch(item.name).includes(normalizedBusinessNameQuery);
 
-      return neighborhoodMatch && categoryMatch && subcategoryMatch && scoreMatch && commentsMatch && websiteMatch;
+      return neighborhoodMatch && categoryMatch && subcategoryMatch && scoreMatch && commentsMatch && websiteMatch && nameMatch;
     });
-  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, effectiveSelectedSubcategory, minScore, commentsFilter, websiteFilter]);
+  }, [groupedBusinesses, effectiveSelectedNeighborhood, effectiveSelectedCategory, effectiveSelectedSubcategory, minScore, commentsFilter, websiteFilter, normalizedBusinessNameQuery]);
 
   const activeFilterCount =
     Number(effectiveSelectedNeighborhood !== "all") +
@@ -289,7 +298,8 @@ export function DashboardShell() {
     Number(effectiveSelectedSubcategory !== "all") +
     Number(minScore > 0) +
     Number(commentsFilter !== "all") +
-    Number(websiteFilter !== "all");
+    Number(websiteFilter !== "all") +
+    Number(normalizedBusinessNameQuery.length > 0);
 
   const updateUrlFilters = useCallback(
     (next: {
@@ -299,6 +309,7 @@ export function DashboardShell() {
       score?: number;
       comments?: "all" | "with" | "without";
       website?: "all" | "with" | "without";
+      businessName?: string;
     }) => {
       const neighborhood = next.neighborhood ?? effectiveSelectedNeighborhood;
       const category = next.category ?? effectiveSelectedCategory;
@@ -306,6 +317,7 @@ export function DashboardShell() {
       const score = next.score ?? minScore;
       const comments = next.comments ?? commentsFilter;
       const website = next.website ?? websiteFilter;
+      const businessName = next.businessName ?? businessNameQuery;
 
       const params = new URLSearchParams();
       if (neighborhood !== "all") {
@@ -326,6 +338,9 @@ export function DashboardShell() {
       if (website !== "all") {
         params.set("website", website);
       }
+      if (businessName.trim()) {
+        params.set("nombre", businessName.trim());
+      }
 
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
@@ -338,6 +353,7 @@ export function DashboardShell() {
       minScore,
       pathname,
       router,
+      businessNameQuery,
       websiteFilter,
     ],
   );
@@ -452,7 +468,7 @@ export function DashboardShell() {
           <div>
             <h2 className="font-semibold">Filtros</h2>
             <p className="text-sm text-zinc-600">
-              Ajusta barrio, sector y score para explorar oportunidades.
+              Busca por nombre y ajusta barrio, sector y score para explorar oportunidades.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full bg-zinc-100 px-2 py-1 text-zinc-700">
@@ -461,6 +477,19 @@ export function DashboardShell() {
               <span className="rounded-full bg-accent-soft px-2 py-1 text-accent">
                 {activeFilterCount} filtros activos
               </span>
+              {normalizedBusinessNameQuery.length > 0 && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
+                  Nombre: {businessNameQuery.trim()}
+                  <button
+                    type="button"
+                    onClick={() => updateUrlFilters({ businessName: "" })}
+                    className="rounded-full px-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                    aria-label="Quitar busqueda por nombre"
+                  >
+                    x
+                  </button>
+                </span>
+              )}
               {effectiveSelectedNeighborhood !== "all" && (
                 <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-2 py-1 text-zinc-700">
                   Barrio: {effectiveSelectedNeighborhood}
@@ -554,6 +583,7 @@ export function DashboardShell() {
                   score: 0,
                   comments: "all",
                   website: "all",
+                  businessName: "",
                 });
               }}
               className="rounded-full border border-line px-4 py-2 text-sm font-semibold hover:bg-zinc-100"
@@ -570,7 +600,18 @@ export function DashboardShell() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-6">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-6">
+          <label className="flex flex-col gap-2 text-sm md:col-span-2 lg:col-span-2">
+            <span className="font-semibold">Nombre del negocio</span>
+            <input
+              type="search"
+              value={businessNameQuery}
+              onChange={(event) => updateUrlFilters({ businessName: event.target.value })}
+              placeholder="Buscar por nombre"
+              className="rounded-xl border border-line bg-white px-3 py-2"
+            />
+          </label>
+
           <label className="flex flex-col gap-2 text-sm">
             <span className="font-semibold">Barrio</span>
             <select
