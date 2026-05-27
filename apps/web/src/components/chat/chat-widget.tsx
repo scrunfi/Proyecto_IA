@@ -16,6 +16,14 @@ type ChatMessage = {
   text: string;
 };
 
+function formatAssistantText(text: string) {
+  return text
+    .replace(/\*+/g, "")
+    .split(/\n{1,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
 export function ChatWidget({ context, businessId, businessName, businessNeighborhood, businessSector }: ChatWidgetProps) {
   const messageCounter = useRef(0);
   const reactId = useId();
@@ -137,15 +145,24 @@ export function ChatWidget({ context, businessId, businessName, businessNeighbor
           <div className="flex-1 space-y-3 overflow-y-auto bg-white/70 px-3 py-3">
             {messages.map((message) => {
               const isUser = message.role === "user";
+              const assistantParagraphs = isUser ? [] : formatAssistantText(message.text);
               return (
                 <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                  <p
+                  <div
                     className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
                       isUser ? "bg-accent text-white" : "border border-line bg-surface text-zinc-800"
                     }`}
                   >
-                    {message.text}
-                  </p>
+                    {isUser ? (
+                      message.text
+                    ) : (
+                      <div className="space-y-2">
+                        {assistantParagraphs.map((paragraph, index) => (
+                          <p key={`${message.id}-${index}`}>{paragraph}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}

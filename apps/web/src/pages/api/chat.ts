@@ -65,8 +65,15 @@ function buildChatInput(params: {
   businessSector?: string;
 }) {
   const { message, context, businessName, businessNeighborhood, businessSector } = params;
+  const formatInstructions = [
+    "Formato de respuesta:",
+    "No uses Markdown ni asteriscos.",
+    "Separa cada parrafo con un salto de linea.",
+    "Usa texto claro y directo.",
+  ].join("\n");
+
   if (context !== "business") {
-    return message;
+    return [formatInstructions, `Pregunta del usuario: ${message}`].join("\n\n");
   }
 
   const focusedBusiness = businessName?.trim() || "Negocio seleccionado";
@@ -76,6 +83,7 @@ function buildChatInput(params: {
   return [
     "[MODO CONTEXTO DE NEGOCIO]",
     "Responde siempre centrado en el negocio seleccionado.",
+    formatInstructions,
     `Negocio: ${focusedBusiness}`,
     `Barrio: ${neighborhood}`,
     `Sector: ${sector}`,
