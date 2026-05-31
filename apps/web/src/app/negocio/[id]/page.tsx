@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 import { BusinessContextMap } from "@/components/business/business-context-map";
 import { AiAnalysisButton } from "@/components/business/ai-analysis-button";
+import { PdfSummaryButton } from "@/components/business/pdf-summary-button";
+import { PrintPageButton } from "@/components/business/print-page-button";
 import { WebRequestButton } from "@/components/business/web-request-button";
 import { ChatWidget } from "@/components/chat/chat-widget";
 import { backendFetch } from "@/lib/backend-client";
@@ -13,7 +15,7 @@ import { getSubsectorLabel } from "@/lib/subsector-label";
 
 type BusinessDetailPageProps = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ radius?: string }>;
+  searchParams: Promise<{ radius?: string; summary?: string }>;
 };
 
 type ScoreBreakdownItem = {
@@ -129,6 +131,68 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
   const recommendationItems = buildRecommendationImpact(recommendations, business.gap);
   const aiAnalysisLines = formatAiReportLines(aiAnalysisReport);
 
+  if (query.summary === "pdf") {
+    const failureItems = buildFailureItems(scoreBreakdown);
+    const improvementItems = recommendationItems.map((item) => item.action.replace(/\s*\(\+\d+\s*pts\)\s*$/i, ""));
+    return (
+      <main className="min-h-screen px-4 py-5 text-foreground print:bg-white sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
+            <Link
+              href={`/negocio/${encodeURIComponent(business.id)}`}
+              className="rounded-full border border-line bg-white px-3 py-1.5 text-xs font-semibold hover:bg-zinc-100"
+            >
+              Volver a la ficha
+            </Link>
+            <PrintPageButton />
+          </div>
+
+          <header className="rounded-3xl border border-line bg-surface px-6 py-6 shadow-sm print:shadow-none">
+            <p className="text-xs font-semibold tracking-[0.2em] text-accent uppercase">Resumen del negocio</p>
+            <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 className="font-serif text-3xl leading-tight sm:text-5xl">{business.name}</h1>
+                <p className="mt-2 text-sm text-zinc-700">
+                  {business.neighborhood} - {sectorLabel}
+                </p>
+              </div>
+              <span className={`rounded-full px-4 py-2 text-sm font-semibold ${scoreTheme.chipClassName}`}>
+                Score {business.score}/100
+              </span>
+            </div>
+          </header>
+
+          <ReportCard title="Mapa de ubicacion y competencia" className="mt-4">
+            <p className="mb-3 text-sm text-zinc-600">
+              Punto destacado: negocio analizado. Resto de marcadores: competidores cercanos del mismo sector.
+            </p>
+            <PrintableSummaryMap items={nearbyBusinesses} />
+          </ReportCard>
+
+          <section className="mt-4 grid gap-4 lg:grid-cols-2">
+            <ReportCard title="Fallos detectados">
+              <ReportList items={failureItems} emptyText="No se han detectado fallos claros con los datos disponibles." />
+            </ReportCard>
+
+            <ReportCard title="Mejoras a implementar">
+              <ReportList items={improvementItems} emptyText="No hay mejoras pendientes registradas." />
+            </ReportCard>
+          </section>
+
+          <ReportCard title="Analisis IA" className="mt-4">
+            {aiAnalysisLines.length === 0 ? (
+              <p className="text-sm text-zinc-600">Sin analisis IA disponible.</p>
+            ) : (
+              <div className="rounded-2xl border border-line bg-surface-2 p-3 text-sm text-zinc-700">
+                {renderAiAnalysisLines(aiAnalysisLines)}
+              </div>
+            )}
+          </ReportCard>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
       <header className="rounded-3xl border border-line bg-surface px-6 py-6 shadow-sm">
@@ -147,29 +211,32 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         <p className="mt-2 text-sm text-zinc-700">
           {business.neighborhood} - {sectorLabel}
         </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Pill
-            label={
-              <LabelWithTooltip
-                label={`Score ${business.score}/100`}
-                tooltip="Puntuacion global del negocio (0-100) basada en senales de presencia y rendimiento digital."
-              />
-            }
-            className={`${scoreTheme.chipClassName} border ${scoreTheme.borderClassName}`}
-          />
-          <Pill
-            label={
-              <LabelWithTooltip
-                label={`Gap ${business.gap} pts`}
-                tooltip="Brecha estimada de mejora: cuantos puntos podria ganar para acercarse al nivel competitivo de su entorno."
-              />
-            }
-          />
-          <Pill label={`${business.reviews} resenas`} />
-          <Pill
-            label={business.hasWebsite ? "Web registrada" : "Sin web registrada"}
-            className={business.hasWebsite ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-800"}
-          />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Pill
+              label={
+                <LabelWithTooltip
+                  label={`Score ${business.score}/100`}
+                  tooltip="Puntuacion global del negocio (0-100) basada en senales de presencia y rendimiento digital."
+                />
+              }
+              className={`${scoreTheme.chipClassName} border ${scoreTheme.borderClassName}`}
+            />
+            <Pill
+              label={
+                <LabelWithTooltip
+                  label={`Gap ${business.gap} pts`}
+                  tooltip="Brecha estimada de mejora: cuantos puntos podria ganar para acercarse al nivel competitivo de su entorno."
+                />
+              }
+            />
+            <Pill label={`${business.reviews} resenas`} />
+            <Pill
+              label={business.hasWebsite ? "Web registrada" : "Sin web registrada"}
+              className={business.hasWebsite ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-800"}
+            />
+          </div>
+          <PdfSummaryButton businessId={business.id} />
         </div>
       </header>
 
@@ -311,7 +378,9 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         <section className="min-h-0 rounded-3xl border border-line bg-surface p-5 shadow-sm xl:col-span-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-semibold">Analisis IA (n8n)</h2>
-            <AiAnalysisButton businessId={id} hasExistingAnalysis={hasExistingAiAnalysis} />
+            <div className="flex flex-wrap items-center gap-2">
+              <AiAnalysisButton businessId={id} hasExistingAnalysis={hasExistingAiAnalysis} />
+            </div>
           </div>
           <div className="mt-3 rounded-2xl border border-line bg-surface-2 p-3 text-sm text-zinc-700">
             {aiAnalysisLines.length === 0 ? (
@@ -598,6 +667,226 @@ function buildRecommendationImpact(recommendations: string[], gap: number): Arra
   }
 
   return weighted;
+}
+
+function buildFailureItems(scoreBreakdown: ScoreBreakdownItem[]) {
+  return scoreBreakdown
+    .filter((item) => item.maxPoints > 0 && item.points < item.maxPoints)
+    .sort((a, b) => (a.points / a.maxPoints) - (b.points / b.maxPoints))
+    .map((item) => `${item.label}: ${item.detail} (${item.points}/${item.maxPoints} pts)`);
+}
+
+function ReportCard({ title, className, children }: { title: string; className?: string; children: ReactNode }) {
+  return (
+    <section className={`break-inside-avoid rounded-3xl border border-line bg-surface p-5 shadow-sm print:shadow-none ${className ?? ""}`}>
+      <h2 className="font-semibold">{title}</h2>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+function ReportList({ items, emptyText }: { items: string[]; emptyText: string }) {
+  const cleanItems = items.map((item) => item.trim()).filter(Boolean);
+  if (cleanItems.length === 0) {
+    return <p className="text-sm text-zinc-600">{emptyText}</p>;
+  }
+
+  return (
+    <ul className="space-y-2 text-sm text-zinc-700">
+      {cleanItems.map((item) => (
+        <li key={item} className="rounded-xl border border-line bg-surface-2 px-3 py-2">
+          {item}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PrintableSummaryMap({
+  items,
+}: {
+  items: Array<{
+    id: string;
+    name: string;
+    neighborhood: string;
+    score: number;
+    lat: number;
+    lon: number;
+    isSelected: boolean;
+    distanceKm: number;
+  }>;
+}) {
+  const validItems = items.filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+
+  if (validItems.length === 0) {
+    return <p className="text-sm text-zinc-600">No hay coordenadas disponibles para pintar el mapa.</p>;
+  }
+
+  const projection = buildPrintableMapProjection(validItems);
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+      <div className="relative h-[320px] overflow-hidden rounded-2xl border border-line bg-surface-2 print:h-[260px]">
+        <div className="absolute inset-0 bg-[#e8dcc5]" />
+        {projection.tiles.map((tile) => (
+          // eslint-disable-next-line @next/next/no-img-element -- OSM tiles must print as plain external images in the PDF summary.
+          <img
+            key={`${tile.z}-${tile.x}-${tile.y}`}
+            src={tile.src}
+            alt=""
+            className="absolute h-auto w-auto max-w-none select-none"
+            style={{ left: `${tile.leftPct}%`, top: `${tile.topPct}%`, width: `${tile.widthPct}%` }}
+            loading="eager"
+          />
+        ))}
+        <div className="absolute left-4 top-4 rounded-full border border-line bg-white/85 px-3 py-1 text-xs font-semibold text-zinc-700 shadow-sm">
+          Radio aprox. 3 km
+        </div>
+        {validItems.map((item) => {
+          const theme = getScoreTheme(item.score);
+          const markerPosition = projectPrintableMapPoint(item, projection);
+          const size = item.isSelected ? 24 : 18;
+
+          return (
+            <div
+              key={item.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${markerPosition.leftPct}%`, top: `${markerPosition.topPct}%`, zIndex: item.isSelected ? 20 : 10 }}
+            >
+              <svg width={size + 8} height={size + 8} viewBox={`0 0 ${size + 8} ${size + 8}`} aria-label={item.name}>
+                {item.isSelected ? <circle cx={(size + 8) / 2} cy={(size + 8) / 2} r={size / 2 + 3} fill="#ffffff" opacity="0.9" /> : null}
+                <circle
+                  cx={(size + 8) / 2}
+                  cy={(size + 8) / 2}
+                  r={size / 2}
+                  fill={theme.color}
+                  stroke={item.isSelected ? "#111827" : "#ffffff"}
+                  strokeWidth={item.isSelected ? 2 : 3}
+                />
+              </svg>
+              {item.isSelected ? (
+                <div className="mt-2 whitespace-nowrap rounded-full border border-line bg-white px-2 py-0.5 text-[11px] font-semibold shadow-sm">
+                  {item.name}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-2xl border border-line bg-surface-2 p-3">
+        <h3 className="text-sm font-semibold">Leyenda del mapa</h3>
+        <ul className="mt-3 space-y-2 text-sm text-zinc-700">
+          {validItems.slice(0, 9).map((item) => {
+            const theme = getScoreTheme(item.score);
+            return (
+              <li key={item.id} className="flex items-start gap-2 rounded-xl border border-line bg-white/75 px-3 py-2">
+                <svg className="mt-1 shrink-0" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <circle cx="8" cy="8" r="6" fill={theme.color} stroke={item.isSelected ? "#111827" : theme.color} strokeWidth="2" />
+                </svg>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-zinc-900">{item.name}</span>
+                  <span className="block text-xs text-zinc-600">
+                    {item.isSelected ? "Negocio analizado" : `${item.neighborhood} - ${item.distanceKm.toFixed(2)} km`} · Score {item.score}/100
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+type PrintableMapProjection = {
+  zoom: number;
+  topLeftX: number;
+  topLeftY: number;
+  width: number;
+  height: number;
+  tiles: Array<{
+    z: number;
+    x: number;
+    y: number;
+    src: string;
+    leftPct: number;
+    topPct: number;
+    widthPct: number;
+  }>;
+};
+
+function buildPrintableMapProjection(items: Array<{ lat: number; lon: number }>): PrintableMapProjection {
+  const width = 900;
+  const height = 520;
+  const tileSize = 256;
+  const padding = 72;
+  const minZoom = 10;
+  const maxZoom = 17;
+  const lats = items.map((item) => item.lat);
+  const lons = items.map((item) => item.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+
+  let zoom = 15;
+  for (let candidate = maxZoom; candidate >= minZoom; candidate -= 1) {
+    const minX = lonToWorldPixelX(minLon, candidate);
+    const maxX = lonToWorldPixelX(maxLon, candidate);
+    const minY = latToWorldPixelY(maxLat, candidate);
+    const maxY = latToWorldPixelY(minLat, candidate);
+    if (Math.max(1, maxX - minX) <= width - padding * 2 && Math.max(1, maxY - minY) <= height - padding * 2) {
+      zoom = candidate;
+      break;
+    }
+  }
+
+  const centerX = (lonToWorldPixelX(minLon, zoom) + lonToWorldPixelX(maxLon, zoom)) / 2;
+  const centerY = (latToWorldPixelY(minLat, zoom) + latToWorldPixelY(maxLat, zoom)) / 2;
+  const topLeftX = centerX - width / 2;
+  const topLeftY = centerY - height / 2;
+  const startTileX = Math.floor(topLeftX / tileSize);
+  const endTileX = Math.floor((topLeftX + width) / tileSize);
+  const startTileY = Math.floor(topLeftY / tileSize);
+  const endTileY = Math.floor((topLeftY + height) / tileSize);
+  const tileCount = 2 ** zoom;
+  const tiles: PrintableMapProjection["tiles"] = [];
+
+  for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
+    if (tileY < 0 || tileY >= tileCount) continue;
+    for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
+      const wrappedTileX = ((tileX % tileCount) + tileCount) % tileCount;
+      tiles.push({
+        z: zoom,
+        x: wrappedTileX,
+        y: tileY,
+        src: `https://tile.openstreetmap.org/${zoom}/${wrappedTileX}/${tileY}.png`,
+        leftPct: ((tileX * tileSize - topLeftX) / width) * 100,
+        topPct: ((tileY * tileSize - topLeftY) / height) * 100,
+        widthPct: (tileSize / width) * 100,
+      });
+    }
+  }
+
+  return { zoom, topLeftX, topLeftY, width, height, tiles };
+}
+
+function projectPrintableMapPoint(item: { lat: number; lon: number }, projection: PrintableMapProjection) {
+  return {
+    leftPct: ((lonToWorldPixelX(item.lon, projection.zoom) - projection.topLeftX) / projection.width) * 100,
+    topPct: ((latToWorldPixelY(item.lat, projection.zoom) - projection.topLeftY) / projection.height) * 100,
+  };
+}
+
+function lonToWorldPixelX(lon: number, zoom: number) {
+  return ((lon + 180) / 360) * 256 * 2 ** zoom;
+}
+
+function latToWorldPixelY(lat: number, zoom: number) {
+  const limitedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const sinLat = Math.sin((limitedLat * Math.PI) / 180);
+  return (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * 256 * 2 ** zoom;
 }
 
 async function fetchNearbyCompetitors(business: ReturnType<typeof toBusiness>, radiusKm: number) {

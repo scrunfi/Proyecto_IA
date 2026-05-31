@@ -36,10 +36,12 @@ export function PrecomputeAllButton() {
       return;
     }
 
-    setJobId(stored);
-    setStatus("loading");
-    setJobStatus("running");
-    setMessage("Recuperando job en ejecucion...");
+    window.setTimeout(() => {
+      setJobId(stored);
+      setStatus("loading");
+      setJobStatus("running");
+      setMessage("Recuperando job en ejecucion...");
+    }, 0);
   }, []);
 
   useEffect(() => {

@@ -30,3 +30,15 @@ body {
   color: var(--foreground);
   font-family: var(--font-manrope), sans-serif;
 }
+
+@page {
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    margin: 0;
+    background: #fff;
+  }
+}

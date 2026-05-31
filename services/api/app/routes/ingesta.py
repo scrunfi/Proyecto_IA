@@ -266,8 +266,8 @@ async def _request_n8n_analysis(business_id: str, osm_id: str | int | None):
     return {"result": text}
 
 
-async def _find_active_shop_by_id(shop_id: str):
-    shop = await shops_collection.find_one({"_id": shop_id, "active": True}, {"osm.id": 1})
+async def _find_active_shop_by_id(shop_id: str, projection: dict | None = None):
+    shop = await shops_collection.find_one({"_id": shop_id, "active": True}, projection)
     if shop:
         return shop
 
@@ -278,7 +278,7 @@ async def _find_active_shop_by_id(shop_id: str):
 
     return await shops_collection.find_one(
         {"active": True, "osm.id": {"$in": osm_candidates}},
-        {"osm.id": 1},
+        projection,
     )
 
 
@@ -1377,7 +1377,7 @@ async def test_google():
 
 @router.get("/shops/id/{shop_id}")
 async def get_shop_by_id(shop_id: str):
-    shop = await shops_collection.find_one({"_id": shop_id, "active": True})
+    shop = await _find_active_shop_by_id(shop_id)
     if not shop:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
     shop["has_website"] = _has_website(shop)
@@ -1389,12 +1389,14 @@ async def get_shop_by_id(shop_id: str):
 
 @router.get("/shops/id/{shop_id}/detail")
 async def get_shop_detail(shop_id: str):
-    shop = await shops_collection.find_one({"_id": shop_id, "active": True})
+    shop = await _find_active_shop_by_id(shop_id)
     if not shop:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
 
+    canonical_shop_id = str(shop.get("_id") or shop_id)
+
     shop_reviews_doc = await shop_reviews_collection.find_one(
-        {"shop_id": shop_id},
+        {"shop_id": canonical_shop_id},
         {"_id": 0, "reviews": 1, "user_ratings_total": 1},
     )
     comments = []
