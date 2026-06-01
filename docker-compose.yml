@@ -31,7 +31,7 @@ services:
     env_file:
       - ./.env
     environment:
-      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/a2c9f55c-ca19-4d21-a64e-05faec7f4f72
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
     restart: unless-stopped
     depends_on:
       - mongo
@@ -43,9 +43,9 @@ services:
     container_name: mongo_container
     restart: unless-stopped
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: QOjmJOG3gUCK2wdvkmDVPZ8r
-      MONGO_INITDB_DATABASE: almeria_shop
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
     ports:
       - "27017:27017"
     volumes:
@@ -73,6 +73,11 @@ services:
       - "5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
+    environment:
+      - N8N_CONCURRENCY_PRODUCTION_LIMIT=1
+      - GENERIC_TIMEZONE=Europe/Madrid
+      - TZ=Europe/Madrid
+      - N8N_SECURE_COOKIE=false
     depends_on:
       - mongo
       - ollama
@@ -85,6 +90,15 @@ services:
     restart: unless-stopped
     ports:
       - "11434:11434"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - ollama_data:/root/.ollama
     networks:
