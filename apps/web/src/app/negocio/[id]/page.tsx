@@ -100,6 +100,13 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
   const scoreTheme = getScoreTheme(business.score);
   const sectorLabel = getSubsectorLabel(business.subcategory ?? business.category);
   const nearbyBusinesses = await fetchNearbyCompetitors(business, radiusKm);
+  const nearbyBusinessesForChat = nearbyBusinesses
+    .filter((item) => !item.isSelected)
+    .map((item) => ({
+      name: item.name,
+      score: item.score,
+      sector: getSubsectorLabel(item.subcategory ?? item.category),
+    }));
 
   try {
     const aiAnalysis = await backendFetch<{
@@ -402,6 +409,7 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         businessName={business.name}
         businessNeighborhood={business.neighborhood}
         businessSector={sectorLabel}
+        nearbyBusinesses={nearbyBusinessesForChat}
       />
 
     </div>

@@ -8,6 +8,11 @@ type ChatWidgetProps = {
   businessName?: string;
   businessNeighborhood?: string;
   businessSector?: string;
+  nearbyBusinesses?: Array<{
+    name: string;
+    score: number;
+    sector: string;
+  }>;
 };
 
 type ChatMessage = {
@@ -24,7 +29,14 @@ function formatAssistantText(text: string) {
     .filter(Boolean);
 }
 
-export function ChatWidget({ context, businessId, businessName, businessNeighborhood, businessSector }: ChatWidgetProps) {
+export function ChatWidget({
+  context,
+  businessId,
+  businessName,
+  businessNeighborhood,
+  businessSector,
+  nearbyBusinesses,
+}: ChatWidgetProps) {
   const messageCounter = useRef(0);
   const reactId = useId();
   const sessionId = useRef<string>(`session-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`);
@@ -87,6 +99,7 @@ export function ChatWidget({ context, businessId, businessName, businessNeighbor
           businessName,
           businessNeighborhood,
           businessSector,
+          nearbyBusinesses,
         }),
       });
 

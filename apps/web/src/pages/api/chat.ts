@@ -10,6 +10,12 @@ type ChatApiResponse =
       detail?: string;
     };
 
+type NearbyBusinessContext = {
+  name: string;
+  score: number;
+  sector: string;
+};
+
 const DEFAULT_CHAT_WEBHOOK_URL = "http://n8n:5678/webhook/f5e986ec-8ab3-4964-a2f4-c9569c64f1d1";
 
 function getWebhookUrl() {
@@ -63,8 +69,9 @@ function buildChatInput(params: {
   businessName?: string;
   businessNeighborhood?: string;
   businessSector?: string;
+  nearbyBusinesses?: NearbyBusinessContext[];
 }) {
-  const { message, context, businessName, businessNeighborhood, businessSector } = params;
+  const { message, context, businessName, businessNeighborhood, businessSector, nearbyBusinesses } = params;
   const formatInstructions = [
     "Formato de respuesta:",
     "No uses Markdown ni asteriscos.",
@@ -79,6 +86,11 @@ function buildChatInput(params: {
   const focusedBusiness = businessName?.trim() || "Negocio seleccionado";
   const neighborhood = businessNeighborhood?.trim() || "Barrio no especificado";
   const sector = businessSector?.trim() || "Sector no especificado";
+  const nearbyBusinessLines = nearbyBusinesses?.length
+    ? nearbyBusinesses.map(
+        (item, index) => `${index + 1}. ${item.name} | Score: ${item.score}/100 | Sector: ${item.sector}`,
+      )
+    : ["No se recibieron negocios cercanos comparables."];
 
   return [
     "[MODO CONTEXTO DE NEGOCIO]",
@@ -87,9 +99,29 @@ function buildChatInput(params: {
     `Negocio: ${focusedBusiness}`,
     `Barrio: ${neighborhood}`,
     `Sector: ${sector}`,
+    "Negocios cercanos comparables:",
+    ...nearbyBusinessLines,
     "Si falta dato exacto, indica supuesto breve y da accion concreta.",
     `Pregunta del usuario: ${message}`,
   ].join("\n");
+}
+
+function normalizeNearbyBusinesses(value: unknown): NearbyBusinessContext[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const name = typeof record.name === "string" ? record.name.trim() : "";
+      const score = typeof record.score === "number" && Number.isFinite(record.score) ? record.score : null;
+      const sector = typeof record.sector === "string" ? record.sector.trim() : "";
+
+      if (!name || score === null || !sector) return null;
+      return { name, score, sector };
+    })
+    .filter((item): item is NearbyBusinessContext => item !== null)
+    .slice(0, 12);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ChatApiResponse>) {
@@ -97,19 +129,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(405).json({ error: "Metodo no permitido" });
   }
 
-  const { message, context, businessId, businessName, businessNeighborhood, businessSector, sessionId } = req.body ?? {};
+  const {
+    message,
+    context,
+    businessId,
+    businessName,
+    businessNeighborhood,
+    businessSector,
+    nearbyBusinesses,
+    sessionId,
+  } = req.body ?? {};
 
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({ error: "Falta el mensaje del usuario" });
   }
 
   const normalizedContext = context === "business" ? "business" : "home";
+  const normalizedNearbyBusinesses = normalizeNearbyBusinesses(nearbyBusinesses);
   const chatInput = buildChatInput({
     message: message.trim(),
     context: normalizedContext,
     businessName: typeof businessName === "string" ? businessName : undefined,
     businessNeighborhood: typeof businessNeighborhood === "string" ? businessNeighborhood : undefined,
     businessSector: typeof businessSector === "string" ? businessSector : undefined,
+    nearbyBusinesses: normalizedNearbyBusinesses,
   });
 
   const controller = new AbortController();
@@ -135,6 +178,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           businessNeighborhood:
             typeof businessNeighborhood === "string" ? businessNeighborhood : undefined,
           businessSector: typeof businessSector === "string" ? businessSector : undefined,
+          nearbyBusinesses: normalizedNearbyBusinesses,
         },
       }),
       signal: controller.signal,
