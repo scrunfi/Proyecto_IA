@@ -86,6 +86,11 @@ export function ChatWidget({
     setIsThinking(true);
 
     try {
+      const history = messages.slice(-6).map((message) => ({
+        role: message.role,
+        text: message.text,
+      }));
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -100,6 +105,7 @@ export function ChatWidget({
           businessNeighborhood,
           businessSector,
           nearbyBusinesses,
+          history,
         }),
       });
 
