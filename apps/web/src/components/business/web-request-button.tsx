@@ -179,7 +179,7 @@ export function WebRequestButton({ businessId }: WebRequestButtonProps) {
         disabled={status === "loading"}
         className="rounded-full border border-line bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {status === "loading" ? "Enviando..." : "Solicitar web (n8n)"}
+        {status === "loading" ? "Enviando..." : "Solicitar web"}
       </button>
       <button
         type="button"

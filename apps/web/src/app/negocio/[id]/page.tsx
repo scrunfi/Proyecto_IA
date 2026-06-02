@@ -384,7 +384,7 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
 
         <section className="min-h-0 rounded-3xl border border-line bg-surface p-5 shadow-sm xl:col-span-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold">Analisis IA (n8n)</h2>
+            <h2 className="font-semibold">Analisis IA</h2>
             <div className="flex flex-wrap items-center gap-2">
               <AiAnalysisButton businessId={id} hasExistingAnalysis={hasExistingAiAnalysis} />
             </div>
