@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { PrecomputeAllButton } from "@/components/admin/precompute-all-button";
 import { GenerateAllWebsButton } from "@/components/admin/generate-all-webs-button";
@@ -19,7 +21,9 @@ export default function Home() {
         </p>
       </header>
 
-      <DashboardShell />
+      <Suspense fallback={<div className="rounded-3xl border border-line bg-surface p-6 text-sm text-zinc-600">Cargando radar...</div>}>
+        <DashboardShell />
+      </Suspense>
 
       <section className="rounded-3xl border border-line bg-surface px-5 py-4 shadow-sm">
         <h2 className="font-semibold">Panel operativo</h2>

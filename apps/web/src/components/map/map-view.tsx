@@ -87,7 +87,7 @@ export function MapView({ businesses, selectedNeighborhood = "all", onBoundsChan
 
     return () => {
       if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
+        (leafletMapRef.current as { remove: () => void }).remove();
         leafletMapRef.current = null;
         markersLayerRef.current = null;
         leafletRef.current = null;
