@@ -12,17 +12,6 @@ Convertir datos de presencia digital en decisiones practicas:
 
 ---
 
-## Arquitectura
-
-El proyecto se organiza en dos capas:
-
-- `apps/web`: frontend en Next.js.
-- `services/api`: backend en FastAPI para ingesta, calculo de metricas y operaciones de IA.
-
-El frontend consume el backend mediante HTTP (REST).
-
----
-
 ## Stack Tecnologico
 
 ### Frontend
@@ -40,74 +29,15 @@ El frontend consume el backend mediante HTTP (REST).
 - Pydantic (validacion y contratos de datos)
 - Uvicorn (servidor ASGI)
 
+### I.A.
+
+- Ollama
+- n8n (Orquestación de flujos)
+
 ### Persistencia
 
 - MongoDB Atlas (cloud) para `shops` e `ingesta_runs`
 - Opcion hibrida recomendada: MongoDB (normalizado) + JSON crudo comprimido en object storage
-
----
-
-## Funcionalidades
-
-- Dashboard con metricas clave:
-  - Barrios activos
-  - Negocios analizados
-  - Score medio
-  - Brecha media
-- Filtros por barrio, sector y score minimo.
-- URL compartible con filtros activos.
-- Mapa de oportunidades con marcadores por nivel de score.
-- Ranking de oportunidades por mayor gap.
-- Vista detalle por negocio con benchmark y recomendaciones.
-
- * score: Nota de madurez digital del negocio [0-100]
- * gap: Distancia entre el score del negocio y el benchmark.
- * Benchmark: Referencia contra la que comparar los negocios. Objetivo del sector (percentil 75).
-
- Ejemplo rápido:
-- Score negocio: 58  
-- Benchmark sector: 75  
-- Gap: 75 - 58 = 17  
-=> ese negocio tiene 17 puntos de brecha.
----
-
-## Funcionamiento
-
-1. El frontend solicita datos al backend FastAPI.
-2. FastAPI valida y transforma datos de entrada.
-3. Se calculan score, gap y brecha media para el filtro actual.
-4. El backend devuelve listado, metricas agregadas y detalle.
-5. El frontend renderiza dashboard, mapa y fichas.
-6. Para IA, FastAPI puede entrenar/actualizar modelo y exponer inferencia de recomendaciones.
-
----
-
-## Endpoints actuales (FastAPI)
-
-- `POST /ingesta`
-  - Ejecuta ingesta desde Overpass, normaliza y actualiza `shops`.
-- `GET /ingesta/runs`
-  - Lista ejecuciones de ingesta con paginacion.
-- `GET /shops`
-  - Lista negocios activos con filtros (`barrio`, `category`, `min_score`) y bbox opcional (`south`, `west`, `north`, `east`).
-- `GET /shops/id/{shop_id}`
-  - Devuelve ficha base de un negocio.
-- `GET /shops/id/{shop_id}/detail`
-  - Devuelve detalle con benchmark y recomendaciones.
-- `POST /shops/id/{shop_id}/ai-analysis`
-  - Envia el `osm.id` del negocio al webhook de n8n y devuelve la respuesta del flujo.
-- `POST /shops/id/{shop_id}/web-request`
-  - Envia a n8n una solicitud para crear web del negocio y guarda estado (`queued`/`sent`/`error`).
-- `GET /shops/id/{shop_id}/web-request/latest`
-  - Devuelve la ultima solicitud de web registrada para ese negocio.
-- `GET /shops/quality`
-  - Reporte agregado de calidad y asignacion de barrio.
-- `GET /shops/quality/issues`
-  - Muestra incidencias de calidad (sin barrio, sin ubicacion, posibles duplicados).
-- `POST /shops/repair-barrios`
-  - Reasigna barrio por coordenadas/etiquetas (`only_missing`, `limit`).
-
-Nota: el frontend incluye vistas operativas `/ingesta`, `/etl` y `/entrenamiento`. Actualmente, las acciones de ETL y entrenamiento son interfaz preparada y no tienen endpoint backend final equivalente.
 
 ---
 
@@ -119,34 +49,6 @@ Nota: el frontend incluye vistas operativas `/ingesta`, `/etl` y `/entrenamiento
 
 ---
 
-## Criterio territorial (barrios)
-
-Metodo recomendado:
-
-1. Definir los 5 barrios con cartografia oficial (GeoJSON/Shapefile).
-2. Asignar negocio a barrio por coordenadas (`lat/lon`) con punto-en-poligono.
-3. Usar codigo postal solo como fallback cuando falte geolocalizacion.
-
----
-
-## Estructura recomendada
-
-```bash
-apps/
-  web/                    # Next.js frontend
-services/
-  api/                    # FastAPI backend
-    app/
-      main.py
-      routers/
-      schemas/
-      services/
-      ml/
-      data/
-```
-
----
-
 ## Puesta en marcha local
 
 ### Requisitos
@@ -154,110 +56,41 @@ services/
 - Node.js 20+
 - Python 3.11+
 
-### Frontend (Next.js)
 
-```bash
-cd apps/web
-npm install
-npm run dev
-```
-
-Frontend disponible en `http://localhost:3000`.
-
-### Backend (FastAPI)
-
-```bash
-cd services/api
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-API disponible en `http://localhost:8000`.
-Documentacion interactiva en `http://localhost:8000/docs`.
-
----
 
 ## Variables de entorno sugeridas
 
-### Frontend (`apps/web/.env.local`)
-
 ```env
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
-
-### Backend (`services/api/.env`)
-
-```env
-MONGO_URI=mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority&appName=almeria
+MONGO_URI=mongodb://<Tu_Usuario>:<Tu_Password>@mongo:27017/almeria_shop?authSource=<Tu_Usuario>
 MONGO_DB_NAME=almeria_shop
+
 OVERPASS_API_URL=https://overpass-api.de/api/interpreter
 OVERPASS_TIMEOUT_SECONDS=60
 OVERPASS_USER_AGENT=ProyectoAlmeria/1.0
+OVERPASS_BBOX=36.80,-2.52,36.88,-2.40
 BARRIOS_GEOJSON_PATH=app/data/barrios.geojson
-N8N_WEBHOOK_URL=https://tu-n8n/webhook/a2c9f55c-ca19-4d21-a64e-05faec7f4f72
-# Opcional: webhook dedicado para solicitudes de web
-N8N_WEBHOOK_WEB_URL=
-# Opcional (si proteges el webhook con header)
-N8N_WEBHOOK_AUTH_HEADER=Authorization
-N8N_WEBHOOK_AUTH_VALUE=Bearer <tu_token>
+
+NEXT_PUBLIC_API_BASE_URL=http://api:8000
+N8N_TIMEOUT_SECONDS=4200
+N8N_WEB_TIMEOUT_SECONDS=4200
+N8N_WEBHOOK_URL=http://n8n:5678/webhook/a2c9f55c-ca19-4d21-a64e-05faec7f4f72
+N8N_WEBHOOK_WEB_URL=http://n8n:5678/webhook/6195475f-6e7b-4d96-9976-887ec6e3c766
+N8N_CHAT_WEBHOOK_URL=http://n8n:5678/webhook/f5e986ec-8ab3-4964-a2f4-c9569c64f1d1/chat
+QDRANT_API_KEY=<Tu_Qdrant_API_Key>
+N8N_CHAT_TIMEOUT_MS=300000
+
+MONGO_INITDB_ROOT_USERNAME=>Tu_Usuario>
+MONGO_INITDB_ROOT_PASSWORD=<Tu_Mongo_Password>
+MONGO_INITDB_DATABASE=almeria_shop
 ```
 
-Nota: puedes copiar `services/api/.env.example` a `services/api/.env` y completar credenciales.
+## Comando para desplegar la aplicación
 
----
+- docker compose up -d --build
 
-## Higiene de repositorio
 
-- No subir secretos ni configuracion local (`.env`, `.env.local`).
-- No subir entornos virtuales ni caches de Python (`.venv`, `__pycache__`, `*.pyc`).
-- Mantener versionado `services/api/.env.example` como plantilla compartida.
-- Si ya existen archivos locales ignorables, puedes limpiar el indice con:
 
-```bash
-git rm -r --cached services/api/.venv services/api/**/__pycache__
-git rm --cached services/api/.env
-```
 
----
-
-## Scripts utiles
-
-### Frontend
-
-- `npm run dev` - desarrollo
-- `npm run build` - build de produccion
-- `npm run start` - ejecutar build
-- `npm run lint` - linting
-
-### Backend
-
-- `uvicorn app.main:app --reload --port 8000` - desarrollo
-
----
-
-## Roadmap
-
-### Fase 1 - MVP funcional
-
-- [x] Dashboard, mapa, filtros y detalle.
-- [x] Ingesta base desde Overpass con normalizacion y scoring inicial.
-- [x] Endpoints de consulta de negocios y detalle.
-- [x] Conexion Next.js -> FastAPI para dashboard y detalle.
-- [ ] Cerrar paridad total entre panel operativo (`/ingesta`, `/etl`, `/entrenamiento`) y endpoints backend.
-
-### Fase 2 - IA aplicada
-
-- [ ] Pipeline de entrenamiento.
-- [ ] Versionado de modelos.
-- [ ] Recomendaciones por dimensiones debiles.
-
-### Fase 3 - Operacion y escalado
-
-- [x] Reportes de calidad y utilidades de reparacion de barrio.
-- [ ] Validacion y monitoreo continuo de calidad de datos.
-- [ ] Logging y observabilidad.
 
 
 
