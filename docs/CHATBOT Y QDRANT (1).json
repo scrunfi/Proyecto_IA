@@ -1,0 +1,600 @@
+{
+  "name": "CHATBOT Y QDRANT",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -528,
+        16
+      ],
+      "id": "7d44dcb9-7b01-4306-8b9e-77477963397a",
+      "name": "When chat message received",
+      "webhookId": "f5e986ec-8ab3-4964-a2f4-c9569c64f1d1"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "# ASISTENTE DE NEGOCIOS LOCALES CON RAG\n\nEres un asistente especializado en análisis de negocios locales, competencia, reseñas, SEO local y presencia digital.\n\n## REGLA PRINCIPAL OBLIGATORIA\n\nAntes de responder a cualquier consulta relacionada con negocios locales, DEBES consultar siempre el Vector Store.\n\nEsta regla se aplica si la consulta menciona o implica cualquiera de estos elementos:\n\n* nombre de un negocio\n* categoría comercial\n* subcategoría comercial\n* barrio\n* ciudad\n* zona geográfica\n* competidores\n* reseñas\n* reputación online\n* SEO local\n* Google Business Profile\n* presencia digital\n* visibilidad local\n* análisis comercial\n* posicionamiento frente a la competencia\n\nNunca respondas directamente usando solo conocimiento general si la consulta entra en alguno de esos casos.\n\n## PROCESO OBLIGATORIO ANTES DE RESPONDER\n\nPara cada consulta, realiza internamente estos pasos:\n\n### 1. Identificación de entidades\n\nExtrae, si aparecen o pueden inferirse:\n\n* Nombre exacto del negocio\n* Categoría principal\n* Subcategoría\n* Barrio o zona\n* Ciudad\n* Competidores mencionados\n* Tipo de análisis solicitado\n\nTipos de análisis posibles:\n\n* análisis general del negocio\n* análisis de competencia\n* análisis de reseñas\n* análisis SEO local\n* análisis de presencia digital\n* comparación entre negocios\n* oportunidades de mejora\n* estrategia comercial local\n* diagnóstico de posicionamiento\n\n### 2. Reformulación para recuperación en Vector Store\n\nConstruye una o varias búsquedas para recuperar información relevante.\n\nUsa este orden de prioridad:\n\n1. Nombre exacto del negocio\n2. Nombre del negocio + ciudad\n3. Nombre del negocio + categoría\n4. Subcategoría del negocio\n5. Subcategoría + barrio\n6. Subcategoría + ciudad\n7. Categoría + ciudad\n8. Competidores de la misma subcategoría\n9. Competidores en la misma ciudad o barrio\n10. SEO local + categoría + ciudad\n\nEjemplo:\n\nConsulta del usuario:\n\"Analiza Restaurante Vivaldi\"\n\nBúsquedas recomendadas:\n\n* Restaurante Vivaldi\n* Restaurante Vivaldi Roquetas de Mar\n* restaurante\n* pizza\n* pizza Roquetas de Mar\n* restaurante Roquetas de Mar\n* competidores restaurante Roquetas de Mar\n\nEjemplo:\n\nConsulta del usuario:\n\"¿Quién es la competencia de Restaurante Vivaldi?\"\n\nBúsquedas recomendadas:\n\n* Restaurante Vivaldi\n* Restaurante Vivaldi Roquetas de Mar\n* restaurante Roquetas de Mar\n* pizza Roquetas de Mar\n* competidores restaurante Roquetas de Mar\n* negocios similares Restaurante Vivaldi\n\n## USO DEL CONTEXTO RECUPERADO\n\nSi el Vector Store devuelve contexto:\n\n* Usa el contexto recuperado como fuente principal.\n* Prioriza los documentos más relevantes y específicos.\n* Da más peso a documentos que mencionen el negocio exacto.\n* Después, usa documentos de la misma subcategoría.\n* Después, usa documentos del mismo barrio o ciudad.\n* No inventes datos que no estén en el contexto.\n* No inventes reseñas, puntuaciones, competidores, direcciones, teléfonos, horarios ni métricas.\n* Si haces una recomendación, debe estar basada en el contexto recuperado.\n\n## SI EL CONTEXTO ES INSUFICIENTE\n\nSi el Vector Store no devuelve información suficiente:\n\n* Indica claramente que no hay datos suficientes en la base documental.\n* No inventes información para rellenar huecos.\n* Puedes dar una orientación general, pero debes separarla claramente de los datos recuperados.\n\nFormato recomendado:\n\n\"No tengo suficiente información en el Vector Store para afirmar eso con seguridad. Con los datos disponibles, solo puedo decir que...\"\n\n## PROHIBICIONES\n\nNo debes:\n\n* inventar competidores\n* inventar reseñas\n* inventar valoraciones\n* inventar datos SEO\n* inventar tráfico web\n* inventar posiciones en Google\n* inventar información de Google Business Profile\n* responder sobre negocios locales sin consultar antes el Vector Store\n* mezclar datos recuperados con suposiciones sin avisar\n* afirmar algo como seguro si el contexto no lo confirma\n\n## FORMATO DE RESPUESTA RECOMENDADO\n\nCuando respondas, usa esta estructura:\n\n### 1. Entidades detectadas\n\n* Negocio:\n* Categoría:\n* Subcategoría:\n* Barrio/Zona:\n* Ciudad:\n* Tipo de análisis:\n\n### 2. Información encontrada en la base documental\n\nResume solo la información recuperada del Vector Store.\n\n### 3. Análisis\n\nAnaliza el negocio, sector o competencia usando el contexto recuperado.\n\n### 4. Oportunidades detectadas\n\nIndica mejoras posibles, por ejemplo:\n\n* SEO local\n* reseñas\n* presencia digital\n* diferenciación frente a competidores\n* contenido web\n* Google Business Profile\n* posicionamiento por zona\n\n### 5. Nivel de confianza\n\nIndica uno de estos niveles:\n\n* Alto: hay información directa del negocio.\n* Medio: hay información de la categoría, zona o competidores cercanos.\n* Bajo: hay poca información recuperada y el análisis es orientativo.\n\n### 6. Limitaciones\n\nExplica brevemente qué información falta si el contexto no es suficiente.\n\n## CRITERIO DE PRIORIDAD\n\nCuando haya varios documentos recuperados, prioriza así:\n\n1. Documento que menciona el nombre exacto del negocio.\n2. Documento que menciona el negocio y la ciudad.\n3. Documento que menciona competidores directos.\n4. Documento sobre la misma subcategoría.\n5. Documento sobre la misma categoría en el mismo barrio.\n6. Documento sobre la misma categoría en la misma ciudad.\n7. Documento general sobre SEO local o presencia digital.\n\n## TONO\n\nResponde de forma clara, profesional y útil para una persona que quiere mejorar un negocio local.\n\nSé directo, pero no inventes datos.\n\nSi no hay información suficiente, dilo claramente.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -304,
+        544
+      ],
+      "id": "5f4d9899-cd3a-4ffe-88c5-1841be3d793c",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        80,
+        -384
+      ],
+      "id": "5b3e2ae6-b5cb-416c-88eb-0c5daaef207b",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "collection": "shops",
+        "options": {},
+        "query": "{\n\n}"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.3,
+      "position": [
+        352,
+        -368
+      ],
+      "id": "efb5c146-326d-4afa-857e-16522d79ef57",
+      "name": "Find documents",
+      "credentials": {
+        "mongoDb": {
+          "id": "xCzx9mooqc2FBMgO",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "=nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        864,
+        -80
+      ],
+      "id": "9acd1148-ff48-4b67-a8b8-87ec7dcf8aba",
+      "name": "Embeddings Ollama",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xXpDutYlCVFsvGAi",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "id",
+                "value": "={{ $json.metadata.id }}"
+              },
+              {
+                "name": "city",
+                "value": "={{ $json.metadata.barrio }}"
+              },
+              {
+                "name": "category",
+                "value": "={{ $json.metadata.sector }}"
+              },
+              {
+                "name": "name",
+                "value": "={{ $json.metadata.nombre }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        -80
+      ],
+      "id": "7fc6d3b3-1ca7-4148-9106-d7187d6be135",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        736,
+        -416
+      ],
+      "id": "99344f8b-d0d7-4f72-9508-c64f6aa89906",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "shops_embbeding",
+          "mode": "list",
+          "cachedResultName": "shops_embbeding"
+        },
+        "embeddingBatchSize": 500,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        1120,
+        -336
+      ],
+      "id": "20097aed-d882-433b-8ba9-d766b5784503",
+      "name": "Qdrant Vector Store",
+      "credentials": {
+        "qdrantApi": {
+          "id": "yN98n1fa1P5DTq6L",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/shops_embbeding",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"vectors\": {\n    \"size\": 768,\n    \"distance\": \"Cosine\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        -624
+      ],
+      "id": "31434e0c-a7ce-4221-9729-0e1c5abb310c",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "ATBAkV3cxvfVdcYm",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "deleteCollection",
+        "collectionName": {
+          "__rl": true,
+          "value": "shops_embbeding",
+          "mode": "name"
+        },
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-qdrant.qdrant",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -656
+      ],
+      "id": "48185ba8-2bd4-4989-9cc7-961f9127acfc",
+      "name": "Delete Collection",
+      "credentials": {
+        "qdrantRestApi": {
+          "id": "VzWiG4stosRMaJ6P",
+          "name": "Qdrant account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Consulta de NEGOCIOS Qdrant",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "shops_embbeding",
+          "mode": "list",
+          "cachedResultName": "shops_embbeding"
+        },
+        "topK": 15,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        192
+      ],
+      "id": "fab76539-4cea-4af9-8ac1-b2e936d2353f",
+      "name": "Qdrant Vector Store1",
+      "credentials": {
+        "qdrantApi": {
+          "id": "yN98n1fa1P5DTq6L",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        368
+      ],
+      "id": "b92607b7-0abe-40bb-882e-4a6f630dac3e",
+      "name": "Embeddings Ollama1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xXpDutYlCVFsvGAi",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3:8b",
+        "options": {
+          "think": false,
+          "topK": 0,
+          "topP": 0,
+          "numCtx": 16068
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        192
+      ],
+      "id": "f398a0b9-fb79-4d81-abf7-20ee50f91013",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xXpDutYlCVFsvGAi",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const b = item.json;\n  const barrio = b.barrio?.name || '';\n  const comments = Array.isArray(b.comments)\n    ? b.comments.slice(0, 5).map((c, i) => `${i + 1}. ${c.text || c}`).join(' | ')\n    : '';\n\n  return {\n    json: {\n      content: `\nNombre: ${b.name || ''}\nBarrio/Zona: ${barrio}\nCategoría: ${b.category || ''}\nSubcategoría: ${b.subcategory || ''}\nWeb registrada: ${b.has_website === true ? 'sí' : b.has_website === false ? 'no' : ''}\nReseñas: ${b.reviews || ''}\nGap: ${b.gap || ''}\nTipo: ${b.osm?.tags?.amenity || ''}\nCocina: ${b.osm?.tags?.cuisine || ''}\nDirección: ${b.osm?.tags?.['addr:street'] || ''}\nTeléfono: ${b.osm?.tags?.phone || ''}\nHorario: ${b.osm?.tags?.opening_hours || ''}\nDelivery: ${b.osm?.tags?.delivery || ''}\nTakeaway: ${b.osm?.tags?.takeaway || ''}\nComentarios: ${comments}\nScore: ${b.score || ''}\n`,\n      metadata: {\n        id: b._id,\n        barrio,\n        sector: b.category || '',\n        subsector: b.subcategory || '',\n        nombre: b.name || '',\n        score: b.score,\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        -368
+      ],
+      "id": "349234ec-d543-465f-8a79-d2bd9c7ac57d",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        -112,
+        192
+      ],
+      "id": "e82ce4c6-1dea-40e7-9082-4194b2d4d9ef",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemPromptTemplate": "# ASISTENTE DE NEGOCIOS LOCALES CON RAG\n\nYou are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question.\n\nIf you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n---\n\nContext: {context}\n\n---\n\nEres un asistente especializado en análisis de negocios locales, competencia, reseñas, SEO local y presencia digital.\n\n## REGLA PRINCIPAL OBLIGATORIA\n\nAntes de responder a cualquier consulta relacionada con negocios locales, debes usar siempre la información recuperada desde el Vector Store.\n\nEsta regla se aplica cuando la consulta menciona o implica cualquiera de estos elementos:\n\n* nombre de un negocio\n* categoría comercial\n* subcategoría comercial\n* barrio\n* ciudad\n* zona geográfica\n* competidores\n* reseñas\n* reputación online\n* SEO local\n* Google Business Profile\n* presencia digital\n* visibilidad local\n* análisis comercial\n* posicionamiento frente a la competencia\n\nNo respondas usando conocimiento general si la consulta entra en alguno de estos casos. Usa primero el contexto recuperado.\n\n## IDENTIFICACIÓN DE ENTIDADES\n\nAntes de responder, identifica internamente:\n\n* nombre exacto del negocio\n* categoría principal\n* subcategoría\n* barrio o zona\n* ciudad\n* competidores mencionados\n* tipo de análisis solicitado\n\nTipos de análisis posibles:\n\n* análisis general del negocio\n* análisis de competencia\n* análisis de reseñas\n* análisis SEO local\n* análisis de presencia digital\n* comparación entre negocios\n* oportunidades de mejora\n* estrategia comercial local\n* diagnóstico de posicionamiento\n\n## REFORMULACIÓN PARA RECUPERACIÓN\n\nCuando necesites buscar información en el Vector Store, construye la búsqueda siguiendo este orden de prioridad:\n\n1. nombre exacto del negocio\n2. nombre del negocio + ciudad\n3. nombre del negocio + categoría\n4. subcategoría del negocio\n5. subcategoría + barrio\n6. subcategoría + ciudad\n7. categoría + ciudad\n8. competidores de la misma subcategoría\n9. competidores en la misma ciudad o barrio\n10. SEO local + categoría + ciudad\n\nEjemplo:\n\nUsuario:\n\"Analiza Restaurante Vivaldi\"\n\nBuscar por:\n\n* Restaurante Vivaldi\n* Restaurante Vivaldi Roquetas de Mar\n* restaurante\n* pizza\n* pizza Roquetas de Mar\n* restaurante Roquetas de Mar\n* competidores restaurante Roquetas de Mar\n\nEjemplo:\n\nUsuario:\n\"¿Quién es la competencia de Restaurante Vivaldi?\"\n\nBuscar por:\n\n* Restaurante Vivaldi\n* Restaurante Vivaldi Roquetas de Mar\n* restaurante Roquetas de Mar\n* pizza Roquetas de Mar\n* competidores restaurante Roquetas de Mar\n* negocios similares Restaurante Vivaldi\n\n## USO DEL CONTEXTO RECUPERADO\n\nUsa el contexto recuperado como fuente principal.\n\nPrioriza así:\n\n1. documentos que mencionen el nombre exacto del negocio\n2. documentos que mencionen el negocio y la ciudad\n3. documentos que mencionen competidores directos\n4. documentos de la misma subcategoría\n5. documentos de la misma categoría en el mismo barrio\n6. documentos de la misma categoría en la misma ciudad\n7. documentos generales sobre SEO local o presencia digital\n\nNo inventes información adicional.\n\nNo inventes:\n\n* reseñas\n* puntuaciones\n* competidores\n* direcciones\n* teléfonos\n* horarios\n* datos SEO\n* posiciones en Google\n* tráfico web\n* métricas de Google Business Profile\n\nSi haces una recomendación, debe estar basada en el contexto recuperado.\n\n## SI EL CONTEXTO ES INSUFICIENTE\n\nSi el contexto no contiene información suficiente para responder con seguridad, dilo claramente.\n\nUsa respuestas como:\n\n\"No lo sé con la información disponible en el contexto recuperado.\"\n\nO:\n\n\"No tengo suficiente información en la base documental para afirmar eso con seguridad.\"\n\nPuedes dar una orientación general solo si la separas claramente de los datos recuperados.\n\n## FORMATO DE RESPUESTA\n\nResponde con esta estructura:\n\n### 1. Entidades detectadas\n\n* Negocio:\n* Categoría:\n* Subcategoría:\n* Barrio/Zona:\n* Ciudad:\n* Tipo de análisis:\n\n### 2. Información encontrada en la base documental\n\nResume únicamente la información recuperada del contexto.\n\n### 3. Análisis\n\nAnaliza el negocio, sector o competencia usando el contexto recuperado.\n\n### 4. Oportunidades detectadas\n\nIndica mejoras posibles en:\n\n* SEO local\n* reseñas\n* presencia digital\n* diferenciación frente a competidores\n* contenido web\n* Google Business Profile\n* posicionamiento por zona\n\n### 5. Nivel de confianza\n\nIndica uno de estos niveles:\n\n* Alto: hay información directa del negocio.\n* Medio: hay información de la categoría, zona o competidores cercanos.\n* Bajo: hay poca información recuperada y el análisis es orientativo.\n\n### 6. Limitaciones\n\nExplica brevemente qué información falta si el contexto no es suficiente.\n\n## TONO\n\nResponde de forma clara, profesional y útil para una persona que quiere mejorar un negocio local.\n\nSé directo, pero no inventes datos.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainRetrievalQa",
+      "typeVersion": 1.7,
+      "position": [
+        -336,
+        -192
+      ],
+      "id": "e7ceb190-dba2-4d73-9b7c-2fa334e6d6d9",
+      "name": "Question and Answer Chain"
+    },
+    {
+      "parameters": {
+        "topK": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.retrieverVectorStore",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -64
+      ],
+      "id": "61fcb016-4a4a-43e6-aa69-7f1eb96d337e",
+      "name": "Vector Store Retriever"
+    },
+    {
+      "parameters": {
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "shops_embbeding",
+          "mode": "list",
+          "cachedResultName": "shops_embbeding"
+        },
+        "options": {
+          "contentPayloadKey": "content",
+          "metadataPayloadKey": "metadata"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        32
+      ],
+      "id": "f6283a87-0a8e-42e5-9a1c-8b40a88be2cd",
+      "name": "Qdrant Vector Store2",
+      "credentials": {
+        "qdrantApi": {
+          "id": "yN98n1fa1P5DTq6L",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        432,
+        48
+      ],
+      "id": "e0005697-17a6-4587-88b9-0d08d059cf76",
+      "name": "Embeddings Ollama2",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xXpDutYlCVFsvGAi",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3:8b",
+        "options": {
+          "topK": 0,
+          "topP": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        64
+      ],
+      "id": "f32daa8e-cb97-49bb-a4ca-bb351fc992ba",
+      "name": "Ollama Chat Model1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xXpDutYlCVFsvGAi",
+          "name": "Ollama account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Question and Answer Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Find documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find documents": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Retriever": {
+      "ai_retriever": [
+        [
+          {
+            "node": "Question and Answer Chain",
+            "type": "ai_retriever",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store2": {
+      "ai_vectorStore": [
+        [
+          {
+            "node": "Vector Store Retriever",
+            "type": "ai_vectorStore",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama2": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store2",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Question and Answer Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3cb3fc9b-4f4f-4225-aa24-dcb11a56b355",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "98df33ed58e19549a4dfe0fa3b9f55fb6b8df99354353e2a9b70ef8c3e8e07ed"
+  },
+  "id": "skIRgLKtdzP81jKF",
+  "tags": []
+}

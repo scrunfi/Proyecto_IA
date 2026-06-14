@@ -23,6 +23,26 @@ type ChatHistoryItem = {
   text: string;
 };
 
+type BusinessBenchmarkContext = {
+  percentile: number;
+  neighborhoodAvg: number;
+  topQuartile: number;
+};
+
+type BusinessScoreBreakdownContext = {
+  label: string;
+  points: number;
+  maxPoints: number;
+  detail: string;
+};
+
+type BusinessCommentContext = {
+  text: string;
+  rating?: number;
+  author?: string;
+  relative_time?: string;
+};
+
 type BackendShop = {
   _id: string;
   name?: string;
@@ -226,10 +246,34 @@ function buildChatInput(params: {
   businessName?: string;
   businessNeighborhood?: string;
   businessSector?: string;
+  businessScore?: number;
+  businessGap?: number;
+  businessReviews?: number;
+  businessHasWebsite?: boolean;
+  businessBenchmark?: BusinessBenchmarkContext;
+  businessRecommendations?: string[];
+  businessScoreBreakdown?: BusinessScoreBreakdownContext[];
+  businessComments?: BusinessCommentContext[];
   nearbyBusinesses?: NearbyBusinessContext[];
   history?: ChatHistoryItem[];
 }) {
-  const { message, context, businessName, businessNeighborhood, businessSector, nearbyBusinesses, history } = params;
+  const {
+    message,
+    context,
+    businessName,
+    businessNeighborhood,
+    businessSector,
+    businessScore,
+    businessGap,
+    businessReviews,
+    businessHasWebsite,
+    businessBenchmark,
+    businessRecommendations,
+    businessScoreBreakdown,
+    businessComments,
+    nearbyBusinesses,
+    history,
+  } = params;
   const formatInstructions = [
     "Formato de respuesta:",
     "No uses Markdown ni asteriscos.",
@@ -253,14 +297,50 @@ function buildChatInput(params: {
         (item, index) => `${index + 1}. ${item.name} | Score: ${item.score}/100 | Sector: ${item.sector}`,
       )
     : ["No se recibieron negocios cercanos comparables."];
+  const selectedBusinessFacts = [
+    typeof businessScore === "number" ? `Score del negocio seleccionado: ${businessScore}/100` : null,
+    typeof businessGap === "number" ? `Gap del negocio seleccionado: ${businessGap} pts` : null,
+    typeof businessReviews === "number" ? `Resenas del negocio seleccionado: ${businessReviews}` : null,
+    typeof businessHasWebsite === "boolean"
+      ? `Web del negocio seleccionado: ${businessHasWebsite ? "registrada" : "sin web registrada"}`
+      : null,
+    businessBenchmark
+      ? `Benchmark: percentil local ${businessBenchmark.percentile}, media del barrio ${businessBenchmark.neighborhoodAvg}, top cuartil ${businessBenchmark.topQuartile}`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+  const recommendationLines = businessRecommendations?.length
+    ? businessRecommendations.map((item, index) => `${index + 1}. ${item}`)
+    : ["No se recibieron recomendaciones directas del negocio seleccionado."];
+  const scoreBreakdownLines = businessScoreBreakdown?.length
+    ? businessScoreBreakdown.map(
+        (item, index) => `${index + 1}. ${item.label}: ${item.points}/${item.maxPoints} pts. ${item.detail}`,
+      )
+    : ["No se recibio desglose de score del negocio seleccionado."];
+  const commentLines = businessComments?.length
+    ? businessComments.map((item, index) => {
+        const rating = typeof item.rating === "number" ? ` | Rating: ${item.rating}/5` : "";
+        const author = item.author ? ` | Autor: ${item.author}` : "";
+        return `${index + 1}. ${item.text}${rating}${author}`;
+      })
+    : ["No se recibieron comentarios directos del negocio seleccionado."];
 
   return [
     "[MODO CONTEXTO DE NEGOCIO]",
     "Responde siempre centrado en el negocio seleccionado.",
+    "Usa primero los datos directos del negocio seleccionado que vienen en este mensaje. Solo usa la base documental para complementar.",
+    "No digas que faltan datos directos del negocio si aparecen en la seccion Datos directos del negocio seleccionado.",
     formatInstructions,
     `Negocio: ${focusedBusiness}`,
     `Barrio: ${neighborhood}`,
     `Sector: ${sector}`,
+    "Datos directos del negocio seleccionado:",
+    ...selectedBusinessFacts,
+    "Desglose directo del score:",
+    ...scoreBreakdownLines,
+    "Recomendaciones directas del negocio seleccionado:",
+    ...recommendationLines,
+    "Comentarios directos del negocio seleccionado:",
+    ...commentLines,
     "Negocios cercanos comparables:",
     ...nearbyBusinessLines,
     ...historyLines,
@@ -303,6 +383,65 @@ function normalizeNearbyBusinesses(value: unknown): NearbyBusinessContext[] | un
     .slice(0, 12);
 }
 
+function normalizeFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeBenchmark(value: unknown): BusinessBenchmarkContext | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const percentile = normalizeFiniteNumber(record.percentile);
+  const neighborhoodAvg = normalizeFiniteNumber(record.neighborhoodAvg);
+  const topQuartile = normalizeFiniteNumber(record.topQuartile);
+  if (percentile === undefined || neighborhoodAvg === undefined || topQuartile === undefined) return undefined;
+  return { percentile, neighborhoodAvg, topQuartile };
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 8);
+  return items.length ? items : undefined;
+}
+
+function normalizeScoreBreakdown(value: unknown): BusinessScoreBreakdownContext[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      const points = normalizeFiniteNumber(record.points);
+      const maxPoints = normalizeFiniteNumber(record.maxPoints);
+      const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+      if (!label || points === undefined || maxPoints === undefined || !detail) return null;
+      return { label, points, maxPoints, detail };
+    })
+    .filter((item): item is BusinessScoreBreakdownContext => item !== null)
+    .slice(0, 8);
+  return items.length ? items : undefined;
+}
+
+function normalizeComments(value: unknown): BusinessCommentContext[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const text = typeof record.text === "string" ? record.text.trim() : "";
+      if (!text) return null;
+      const rating = normalizeFiniteNumber(record.rating);
+      const author = typeof record.author === "string" ? record.author.trim() : undefined;
+      const relative_time = typeof record.relative_time === "string" ? record.relative_time.trim() : undefined;
+      return { text: text.slice(0, 700), rating, author, relative_time };
+    })
+    .filter((item): item is BusinessCommentContext => item !== null)
+    .slice(0, 5);
+  return items.length ? items : undefined;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ChatApiResponse>) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Metodo no permitido" });
@@ -315,6 +454,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     businessName,
     businessNeighborhood,
     businessSector,
+    businessScore,
+    businessGap,
+    businessReviews,
+    businessHasWebsite,
+    businessBenchmark,
+    businessRecommendations,
+    businessScoreBreakdown,
+    businessComments,
     nearbyBusinesses,
     history,
     sessionId,
@@ -327,6 +474,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const normalizedContext = context === "business" ? "business" : "home";
   const normalizedNearbyBusinesses = normalizeNearbyBusinesses(nearbyBusinesses);
   const normalizedHistory = normalizeHistory(history);
+  const normalizedBusinessScore = normalizeFiniteNumber(businessScore);
+  const normalizedBusinessGap = normalizeFiniteNumber(businessGap);
+  const normalizedBusinessReviews = normalizeFiniteNumber(businessReviews);
+  const normalizedBusinessHasWebsite = typeof businessHasWebsite === "boolean" ? businessHasWebsite : undefined;
+  const normalizedBusinessBenchmark = normalizeBenchmark(businessBenchmark);
+  const normalizedBusinessRecommendations = normalizeStringArray(businessRecommendations);
+  const normalizedBusinessScoreBreakdown = normalizeScoreBreakdown(businessScoreBreakdown);
+  const normalizedBusinessComments = normalizeComments(businessComments);
 
   if (normalizedContext === "home") {
     try {
@@ -345,6 +500,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     businessName: typeof businessName === "string" ? businessName : undefined,
     businessNeighborhood: typeof businessNeighborhood === "string" ? businessNeighborhood : undefined,
     businessSector: typeof businessSector === "string" ? businessSector : undefined,
+    businessScore: normalizedBusinessScore,
+    businessGap: normalizedBusinessGap,
+    businessReviews: normalizedBusinessReviews,
+    businessHasWebsite: normalizedBusinessHasWebsite,
+    businessBenchmark: normalizedBusinessBenchmark,
+    businessRecommendations: normalizedBusinessRecommendations,
+    businessScoreBreakdown: normalizedBusinessScoreBreakdown,
+    businessComments: normalizedBusinessComments,
     nearbyBusinesses: normalizedNearbyBusinesses,
     history: normalizedHistory,
   });
@@ -372,6 +535,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           businessNeighborhood:
             typeof businessNeighborhood === "string" ? businessNeighborhood : undefined,
           businessSector: typeof businessSector === "string" ? businessSector : undefined,
+          businessScore: normalizedBusinessScore,
+          businessGap: normalizedBusinessGap,
+          businessReviews: normalizedBusinessReviews,
+          businessHasWebsite: normalizedBusinessHasWebsite,
+          businessBenchmark: normalizedBusinessBenchmark,
+          businessRecommendations: normalizedBusinessRecommendations,
+          businessScoreBreakdown: normalizedBusinessScoreBreakdown,
+          businessComments: normalizedBusinessComments,
           nearbyBusinesses: normalizedNearbyBusinesses,
         },
       }),

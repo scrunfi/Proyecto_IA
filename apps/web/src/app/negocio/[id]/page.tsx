@@ -409,6 +409,14 @@ export default async function BusinessDetailPage({ params, searchParams }: Busin
         businessName={business.name}
         businessNeighborhood={business.neighborhood}
         businessSector={sectorLabel}
+        businessScore={business.score}
+        businessGap={business.gap}
+        businessReviews={business.reviews}
+        businessHasWebsite={business.hasWebsite}
+        businessBenchmark={benchmark}
+        businessRecommendations={recommendationItems.map((item) => item.action)}
+        businessScoreBreakdown={scoreBreakdown}
+        businessComments={comments.slice(0, 5)}
         nearbyBusinesses={nearbyBusinessesForChat}
       />
 

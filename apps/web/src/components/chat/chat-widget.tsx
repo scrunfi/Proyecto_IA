@@ -8,6 +8,28 @@ type ChatWidgetProps = {
   businessName?: string;
   businessNeighborhood?: string;
   businessSector?: string;
+  businessScore?: number;
+  businessGap?: number;
+  businessReviews?: number;
+  businessHasWebsite?: boolean;
+  businessBenchmark?: {
+    percentile: number;
+    neighborhoodAvg: number;
+    topQuartile: number;
+  };
+  businessRecommendations?: string[];
+  businessScoreBreakdown?: Array<{
+    label: string;
+    points: number;
+    maxPoints: number;
+    detail: string;
+  }>;
+  businessComments?: Array<{
+    text: string;
+    rating?: number;
+    author?: string;
+    relative_time?: string;
+  }>;
   nearbyBusinesses?: Array<{
     name: string;
     score: number;
@@ -35,6 +57,14 @@ export function ChatWidget({
   businessName,
   businessNeighborhood,
   businessSector,
+  businessScore,
+  businessGap,
+  businessReviews,
+  businessHasWebsite,
+  businessBenchmark,
+  businessRecommendations,
+  businessScoreBreakdown,
+  businessComments,
   nearbyBusinesses,
 }: ChatWidgetProps) {
   const messageCounter = useRef(0);
@@ -104,6 +134,14 @@ export function ChatWidget({
           businessName,
           businessNeighborhood,
           businessSector,
+          businessScore,
+          businessGap,
+          businessReviews,
+          businessHasWebsite,
+          businessBenchmark,
+          businessRecommendations,
+          businessScoreBreakdown,
+          businessComments,
           nearbyBusinesses,
           history,
         }),
