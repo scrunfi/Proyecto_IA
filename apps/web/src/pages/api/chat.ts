@@ -43,6 +43,21 @@ type BusinessCommentContext = {
   relative_time?: string;
 };
 
+type SelectedBusinessContext = {
+  name?: string;
+  neighborhood?: string;
+  sector?: string;
+  score?: number;
+  gap?: number;
+  reviews?: number;
+  hasWebsite?: boolean;
+  benchmark?: BusinessBenchmarkContext;
+  recommendations?: string[];
+  scoreBreakdown?: BusinessScoreBreakdownContext[];
+  comments?: BusinessCommentContext[];
+  nearbyBusinesses?: NearbyBusinessContext[];
+};
+
 type BackendShop = {
   _id: string;
   name?: string;
@@ -112,6 +127,102 @@ function isCountQuery(message: string) {
 function isBestScoreQuery(message: string) {
   const normalized = normalizeText(message);
   return /\b(mejor|mayor|top|ranking|mas alto|highest)\b/i.test(normalized) && /\bscore|puntuacion\b/i.test(normalized);
+}
+
+function isBusinessStrengthsQuery(message: string) {
+  const normalized = normalizeText(message);
+  return (
+    /\b(puntos?s? fuertes?|fortalezas?|ventajas?|destaca|diferencial(?:es)?)\b/i.test(normalized) &&
+    /\b(competencia|competidores?|directa|comparacion|frente|relacion)\b/i.test(normalized)
+  );
+}
+
+function hasDirectSelectedBusinessData(context: SelectedBusinessContext) {
+  return (
+    typeof context.score === "number" ||
+    typeof context.gap === "number" ||
+    typeof context.reviews === "number" ||
+    typeof context.hasWebsite === "boolean" ||
+    Boolean(context.benchmark) ||
+    Boolean(context.recommendations?.length) ||
+    Boolean(context.scoreBreakdown?.length) ||
+    Boolean(context.comments?.length)
+  );
+}
+
+function formatNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function answerSelectedBusinessStrengths(context: SelectedBusinessContext): string | null {
+  if (!hasDirectSelectedBusinessData(context)) return null;
+
+  const name = context.name?.trim() || "el negocio seleccionado";
+  const neighborhood = context.neighborhood?.trim() || "zona no especificada";
+  const sector = context.sector?.trim() || "sector no especificado";
+  const competitors = context.nearbyBusinesses ?? [];
+  const score = context.score;
+  const competitorAverage = competitors.length
+    ? competitors.reduce((total, item) => total + item.score, 0) / competitors.length
+    : undefined;
+  const strongerThan = typeof score === "number" ? competitors.filter((item) => item.score < score).length : undefined;
+  const topScoreAreas = (context.scoreBreakdown ?? [])
+    .filter((item) => item.maxPoints > 0)
+    .sort((a, b) => b.points / b.maxPoints - a.points / a.maxPoints)
+    .slice(0, 3);
+
+  const strengths = [
+    typeof score === "number" && typeof competitorAverage === "number"
+      ? score >= competitorAverage
+        ? `Score competitivo: ${name} tiene ${score}/100 frente a una media de competidores cercanos de ${formatNumber(competitorAverage)}/100.`
+        : `Aunque su score (${score}/100) esta por debajo de la media cercana (${formatNumber(competitorAverage)}/100), ya hay una base medible para priorizar mejoras frente a competidores concretos.`
+      : typeof score === "number"
+        ? `Score disponible: ${name} cuenta con una puntuacion directa de ${score}/100, lo que permite compararlo y priorizar acciones.`
+        : null,
+    typeof strongerThan === "number" && competitors.length > 0
+      ? `Comparacion directa: supera en score a ${strongerThan} de ${competitors.length} competidores cercanos recibidos en la ficha.`
+      : null,
+    context.benchmark
+      ? `Referencia local clara: percentil ${context.benchmark.percentile}, media del barrio ${context.benchmark.neighborhoodAvg} y top cuartil ${context.benchmark.topQuartile}. Esto permite medir si compite por encima o por debajo del entorno inmediato.`
+      : null,
+    typeof context.hasWebsite === "boolean"
+      ? context.hasWebsite
+        ? "Presencia web registrada: parte con una ventaja frente a competidores que no tengan web enlazada o trazable."
+        : "Oportunidad digital evidente: si la competencia directa tambien tiene scores bajos, activar una web y enlazarla puede convertirse rapido en una ventaja diferencial."
+      : null,
+    typeof context.reviews === "number"
+      ? `Base reputacional cuantificada: tiene ${context.reviews} resenas registradas, dato util para trabajar confianza local y compararse con negocios cercanos.`
+      : null,
+    ...topScoreAreas.map((item) => `${item.label}: ${item.points}/${item.maxPoints} pts. ${item.detail}`),
+  ].filter((item): item is string => Boolean(item));
+
+  const competitorLines = competitors.length
+    ? competitors
+        .slice()
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map((item, index) => `${index + 1}. ${item.name}: ${item.score}/100, ${item.sector}`)
+    : ["No se recibieron competidores cercanos suficientes para listar una comparativa detallada."];
+
+  const recommendations = context.recommendations?.length
+    ? context.recommendations.slice(0, 4)
+    : ["Completar web, horarios, telefono y perfil local para convertir la brecha digital en ventaja competitiva."];
+
+  return [
+    `Negocio y contexto\n${name}, en ${neighborhood}, sector ${sector}.`,
+    `Datos directos usados\n${[
+      typeof context.score === "number" ? `Score ${context.score}/100` : null,
+      typeof context.gap === "number" ? `Gap ${context.gap} pts` : null,
+      typeof context.reviews === "number" ? `${context.reviews} resenas` : null,
+      typeof context.hasWebsite === "boolean" ? (context.hasWebsite ? "web registrada" : "sin web registrada") : null,
+    ]
+      .filter(Boolean)
+      .join("; ")}.`,
+    `Competencia directa recibida\n${competitorLines.join("\n")}`,
+    `Puntos fuertes frente a la competencia\n${strengths.map((item, index) => `${index + 1}. ${item}`).join("\n")}`,
+    `Acciones para reforzar esos puntos fuertes\n${recommendations.map((item, index) => `${index + 1}. ${item}`).join("\n")}`,
+    `Nivel de confianza\n${competitors.length ? "Alto" : "Medio"}, porque se han usado datos directos de la ficha del negocio${competitors.length ? " y competidores cercanos recibidos por la aplicacion." : ", aunque falta una lista amplia de competidores cercanos."}`,
+  ].join("\n\n");
 }
 
 function isClothingShop(shop: BackendShop) {
@@ -432,10 +543,14 @@ function normalizeComments(value: unknown): BusinessCommentContext[] | undefined
       const record = item as Record<string, unknown>;
       const text = typeof record.text === "string" ? record.text.trim() : "";
       if (!text) return null;
+      const comment: BusinessCommentContext = { text: text.slice(0, 700) };
       const rating = normalizeFiniteNumber(record.rating);
-      const author = typeof record.author === "string" ? record.author.trim() : undefined;
-      const relative_time = typeof record.relative_time === "string" ? record.relative_time.trim() : undefined;
-      return { text: text.slice(0, 700), rating, author, relative_time };
+      const author = typeof record.author === "string" ? record.author.trim() : "";
+      const relative_time = typeof record.relative_time === "string" ? record.relative_time.trim() : "";
+      if (rating !== undefined) comment.rating = rating;
+      if (author) comment.author = author;
+      if (relative_time) comment.relative_time = relative_time;
+      return comment;
     })
     .filter((item): item is BusinessCommentContext => item !== null)
     .slice(0, 5);
@@ -491,6 +606,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     } catch {
       // If the business API is unavailable, keep the existing n8n fallback behavior.
+    }
+  }
+
+  if (normalizedContext === "business" && isBusinessStrengthsQuery(message.trim())) {
+    const deterministicReply = answerSelectedBusinessStrengths({
+      name: typeof businessName === "string" ? businessName : undefined,
+      neighborhood: typeof businessNeighborhood === "string" ? businessNeighborhood : undefined,
+      sector: typeof businessSector === "string" ? businessSector : undefined,
+      score: normalizedBusinessScore,
+      gap: normalizedBusinessGap,
+      reviews: normalizedBusinessReviews,
+      hasWebsite: normalizedBusinessHasWebsite,
+      benchmark: normalizedBusinessBenchmark,
+      recommendations: normalizedBusinessRecommendations,
+      scoreBreakdown: normalizedBusinessScoreBreakdown,
+      comments: normalizedBusinessComments,
+      nearbyBusinesses: normalizedNearbyBusinesses,
+    });
+
+    if (deterministicReply) {
+      return res.status(200).json({ reply: deterministicReply });
     }
   }
 
